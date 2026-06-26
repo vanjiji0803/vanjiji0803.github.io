@@ -1,0 +1,67 @@
+---
+const steps = [
+  {
+    title: { en: 'Pharmacy', zh: '药学' },
+    body: {
+      en: 'Pharmaceutical preparations — how drugs are formulated, and how the body actually responds.',
+      zh: '药剂学——药物如何被制成，人体又如何真实地响应。',
+    },
+  },
+  {
+    title: { en: 'Clinical pharmacy & bioinformatics', zh: '临床药学与生物信息学' },
+    body: {
+      en: "A Clinical Pharmacy master's at Peking University, working on precision medicine, led into GWAS and bioinformatics — and from there, into using machine learning to mine individualized differences out of data. That's what pulled me toward coding.",
+      zh: '在北京大学读临床药学硕士，做精准医疗方向的课题，由此接触到 GWAS 与生物信息学——并对用机器学习从数据里挖掘个体化差异这件事产生了兴趣，这也是我转向编程这条路的起点。',
+    },
+  },
+  {
+    title: { en: 'Computer vision', zh: '计算机视觉' },
+    body: {
+      en: 'Carried that skepticism into surgical detection systems — and into stress-testing them against real variability, not just held-out test sets.',
+      zh: '把同样的警惕带进了手术检测系统——并用真实场景的变异性、而非单纯的留出测试集去检验它们。',
+    },
+  },
+  {
+    title: { en: 'AI agents', zh: 'AI Agent' },
+    body: {
+      en: "Detection alone isn't understanding — now building agents that combine detection, event extraction, and RAG retrieval to reason about a procedure.",
+      zh: '检测本身不等于理解——现在构建结合检测、事件提取与 RAG 检索的 agent，去推理手术过程中究竟发生了什么。',
+    },
+  },
+];
+---
+<section id="about" class="section">
+  <div class="section-inner">
+    <p class="section-label">
+      <span class="lang-en">01 — About</span>
+      <span class="lang-zh">01 — 关于</span>
+    </p>
+    <div class="about-grid">
+      <p class="about-lead lang-en">
+        I work at the boundary between two things that usually live in different buildings: rigorous clinical research and AI systems that have to survive contact with a real operating room.
+      </p>
+      <p class="about-lead lang-zh">
+        我的工作处在两件通常分属不同领域的事情的交界处：严谨的临床研究，以及必须在真实手术室里经受考验的 AI 系统。
+      </p>
+      <div class="about-body lang-en">
+        <p>I started in pharmacy, then did a master's in clinical pharmacy at Peking University focused on precision medicine — specifically, the genetic factors behind individual variability in antithrombotic drug response. It was through that research that I first ran into GWAS and bioinformatics, got interested in using machine learning to mine individualized differences out of data, and eventually made the jump into coding as a career. That work also taught me to be suspicious of anything that looks clean only because the dataset is small and the conditions are controlled.</p>
+        <p>That suspicion turned out to be useful. I now build computer vision systems — bleeding detection, surgical smoke detection, instrument tracking — and deploy them on edge hardware inside real operating rooms, most recently as part of an AI agent for intraoperative decision support. The gap between a model's offline accuracy and its behavior in a live procedure is where most of the interesting problems live, and it's the gap I want to keep working on.</p>
+      </div>
+      <div class="about-body lang-zh">
+        <p>我最初学的是药学，后来在北京大学读临床药学硕士，研究方向是精准医疗——具体是抗血栓药物个体反应差异背后的遗传因素。也是在做这个课题的过程中，接触到了 GWAS 和生物信息学，开始对用机器学习从数据里挖掘个体化差异这件事感兴趣，慢慢就走上了写代码这条路。那段经历也让我对"看起来很干净"的结果保持警惕——很多时候只是因为数据集小、条件可控才显得干净。</p>
+        <p>这种警惕后来很有用。现在我构建计算机视觉系统——出血检测、手术烟雾检测、器械追踪——并把它们部署在真实手术室里的边缘硬件上，最近还在做一个用于术中决策支持的 AI agent。模型离线准确率和它在真实手术中的实际表现之间的差距，正是大部分有意思的问题所在，也是我想持续深入的方向。</p>
+      </div>
+    </div>
+
+    <div class="journey">
+      {steps.map((step, i) => (
+        <div class="journey-step reveal">
+          <span class="journey-index">{String(i + 1).padStart(2, '0')}</span>
+          <h4><span class="lang-en">{step.title.en}</span><span class="lang-zh">{step.title.zh}</span></h4>
+          <p class="lang-en">{step.body.en}</p>
+          <p class="lang-zh">{step.body.zh}</p>
+        </div>
+      ))}
+    </div>
+  </div>
+</section>

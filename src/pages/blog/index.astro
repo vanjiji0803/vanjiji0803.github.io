@@ -1,0 +1,34 @@
+---
+import { getCollection } from 'astro:content';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import BlogCard from '../../components/BlogCard.astro';
+
+const allPosts = await getCollection('blog', ({ data }) => {
+  return import.meta.env.PROD ? data.draft !== true : true;
+});
+const posts = allPosts.sort((a, b) => b.data.date.valueOf() - a.data.date.valueOf());
+---
+<BaseLayout title="Blog — Fan Zhang" description="Technical notes on surgical computer vision, edge AI deployment, and agent systems.">
+  <section class="section">
+    <div class="section-inner">
+      <p class="section-label">Blog</p>
+      <h1 class="contact-heading" style="margin-bottom: 12px;">Notes from the lab.</h1>
+      <p class="contact-sub">Technical posts on surgical CV, edge deployment, and agent systems. Drafted weekly by an LLM, reviewed and edited by me before anything publishes.</p>
+      {posts.length === 0 ? (
+        <p class="about-body">No posts yet — check back soon.</p>
+      ) : (
+        <div class="blog-list">
+          {posts.map((post) => (
+            <BlogCard
+              slug={post.id}
+              title={post.data.title}
+              description={post.data.description}
+              date={post.data.date}
+              tags={post.data.tags}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  </section>
+</BaseLayout>

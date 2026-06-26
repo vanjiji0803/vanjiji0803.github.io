@@ -1,0 +1,37 @@
+name: Draft weekly blog post
+
+on:
+  schedule:
+    - cron: '0 1 * * 1' # Monday 01:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Generate draft post
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: node scripts/generate-blog-post.mjs
+      - name: Open PR with the draft
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: 'blog: weekly draft post'
+          title: 'Weekly blog draft'
+          body: |
+            Auto-generated draft from the weekly blog workflow. `draft: true` in the
+            frontmatter — it will not appear on the live site until reviewed, edited
+            as needed, and the draft flag is removed.
+          branch: auto-blog-draft
+          labels: auto-blog-draft
+          add-paths: |
+            src/content/blog/*.md
+            scripts/topics.json

@@ -1,0 +1,72 @@
+---
+import { Code } from 'astro:components';
+
+const blogBotSnippet = `const topic = pickNextTopic(topics);
+const draft = await deepseek.chat({
+  system: SURGICAL_AI_VOICE_PROMPT,
+  user: \`Write a technically specific post about: \${topic}\`,
+});
+writeDraft(draft, { draft: true }); // human reviews via PR before it ever publishes`;
+---
+<section id="projects" class="section section-alt">
+  <div class="section-inner">
+    <p class="section-label">
+      <span class="lang-en">04 — Projects &amp; AI Lab</span>
+      <span class="lang-zh">04 — 项目与 AI Lab</span>
+    </p>
+    <div class="projects-grid">
+
+      <article class="project-card reveal">
+        <h4>Surg-Agent</h4>
+        <p class="lang-en">An AI-assisted surgical scene understanding system: real-time detection feeds an event-extraction layer, which a RAG-based retrieval module grounds against surgical knowledge for intraoperative decision support.</p>
+        <p class="lang-zh">一个 AI 辅助的手术场景理解系统：实时检测结果输入事件提取层，再由基于 RAG 的检索模块结合手术知识库，为术中决策提供支持。</p>
+        <div class="project-tags">
+          <span class="project-tag">YOLO</span>
+          <span class="project-tag">RAG</span>
+          <span class="project-tag">TensorRT</span>
+          <span class="project-tag">NVIDIA IGX/Holoscan</span>
+        </div>
+      </article>
+
+      <article class="project-card reveal">
+        <h4><span class="lang-en">Bleeding &amp; smoke detection</span><span class="lang-zh">出血与烟雾检测</span></h4>
+        <p class="lang-en">Patent-backed computer vision for laparoscopic video — bleeding point trajectory and surgical smoke detection, deployed and stability-tested on edge hardware inside real operating rooms.</p>
+        <p class="lang-zh">已获专利支撑的腹腔镜视频计算机视觉系统——出血点轨迹与手术烟雾检测，部署并在真实手术室边缘硬件上完成稳定性测试。</p>
+        <div class="project-tags">
+          <span class="project-tag lang-en">Computer vision</span>
+          <span class="project-tag lang-zh">计算机视觉</span>
+          <span class="project-tag lang-en">Edge deployment</span>
+          <span class="project-tag lang-zh">边缘部署</span>
+          <span class="project-tag lang-en">2 patents granted</span>
+          <span class="project-tag lang-zh">2 项专利已授权</span>
+        </div>
+      </article>
+
+      <article class="project-card reveal">
+        <h4><span class="lang-en">Evaluating trust, not just accuracy</span><span class="lang-zh">评估的是信任，不只是准确率</span></h4>
+        <p class="lang-en">A bleeding detector can look near-perfect on a held-out test set and still misfire once smoke, lighting shifts, or an unfamiliar instrument enters frame. I'm building an evaluation methodology that measures, at a fine-grained level, whether a surgical AI system holds up under that real-world variability — not just whether it scores well on the benchmark it was tuned for.</p>
+        <p class="lang-zh">一个出血检测模型可以在留出测试集上接近完美，却在遇到烟雾、光照变化或陌生器械时频繁失误。我在构建一套评估方法，细粒度地衡量手术 AI 系统能否经受真实场景变异性的考验，而不只是在被调优过的 benchmark 上表现好看。</p>
+        <div class="project-tags">
+          <span class="project-tag lang-en">Evaluation methodology</span>
+          <span class="project-tag lang-zh">评估方法论</span>
+          <span class="project-tag lang-en">Domain shift</span>
+          <span class="project-tag lang-zh">分布偏移</span>
+        </div>
+      </article>
+
+      <article class="project-card reveal">
+        <h4><span class="lang-en">This blog has a co-author</span><span class="lang-zh">这个博客有个合著者</span></h4>
+        <p class="lang-en">A weekly GitHub Action drafts a technical post with an LLM and opens a pull request. It never publishes on its own — every post is reviewed and edited before merge. The workflow and prompt live in this repo.</p>
+        <p class="lang-zh">每周由一个 GitHub Action 调用大模型起草一篇技术文章并开 PR，从不自行发布——每篇文章合并前都经过我审核和修改。工作流和 prompt 都在这个仓库里。</p>
+        <div class="codeblock">
+          <Code code={blogBotSnippet} lang="js" theme="github-dark" />
+        </div>
+        <a class="project-link" href="https://github.com/vanjiji0803/vanjiji0803.github.io/blob/main/.github/workflows/generate-blog.yml" target="_blank" rel="noopener">
+          <span class="lang-en">View the workflow →</span>
+          <span class="lang-zh">查看工作流 →</span>
+        </a>
+      </article>
+
+    </div>
+  </div>
+</section>

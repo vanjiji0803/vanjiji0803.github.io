@@ -1,0 +1,96 @@
+---
+const items = [
+  {
+    role: { en: 'Algorithm Engineer', zh: '算法工程师' },
+    date: 'Jun 2025 — Present',
+    org: 'Weijing Medical Surgical Robotics Research Institute · Hangzhou',
+    bullets: [
+      {
+        en: 'Develop YOLO-based bleeding, smoke, and foreign-body detection for laparoscopic surgical video, supporting intraoperative risk monitoring and surgical robot registration.',
+        zh: '开发基于 YOLO 的腹腔镜手术视频出血、烟雾、异物检测，支撑术中风险监测与手术机器人配准。',
+      },
+      {
+        en: 'Deploy and optimize computer vision models on NVIDIA IGX/AGX edge platforms with Holoscan and TensorRT for real-time inference under long-duration validation.',
+        zh: '在 NVIDIA IGX/AGX 边缘平台上基于 Holoscan 与 TensorRT 部署并优化计算机视觉模型，支持长时长验证下的实时推理。',
+      },
+      {
+        en: 'Building Surg-Agent — an AI-assisted surgical scene understanding system combining detection, event extraction, and RAG-based knowledge retrieval.',
+        zh: '构建 Surg-Agent —— 一个结合检测、事件提取与 RAG 知识检索的 AI 辅助手术场景理解系统。',
+      },
+    ],
+  },
+  {
+    role: { en: 'Medical Data Analyst', zh: '医疗数据分析师' },
+    date: 'Jul 2023 — Nov 2024',
+    org: 'Yaotuo Pharmaceutical Technology Co., Ltd. · Shanghai',
+    bullets: [
+      {
+        en: 'Built Python data pipelines for pharmaceutical and clinical datasets to support healthcare intelligence applications.',
+        zh: '构建 Python 数据管道处理医药与临床数据集，支撑医疗智能应用。',
+      },
+      {
+        en: 'Synthesized evidence from medical literature and clinical guidelines on treatment strategy, indications, and contraindications.',
+        zh: '梳理医学文献与临床指南中关于治疗策略、适应症与禁忌症的证据。',
+      },
+      {
+        en: 'Designed information-extraction workflows combining rule-based methods and medical terminologies to structure drug, disease, and outcome data.',
+        zh: '设计结合规则方法与医学术语库的信息抽取流程，结构化药物、疾病与结局数据。',
+      },
+    ],
+  },
+  {
+    role: { en: 'M.S. in Clinical Pharmacy', zh: '临床药学硕士' },
+    date: 'Sep 2020 — Jun 2023',
+    org: 'Peking University · Beijing',
+    bullets: [
+      {
+        en: "Thesis: genetic study on individual differences of antithrombotic drugs and bioinformatic mining of existing cohorts.",
+        zh: '论文方向：抗血栓药物个体差异的遗传学研究与现有队列的生物信息学挖掘。',
+      },
+      {
+        en: 'Conducted GWAS and pharmacogenomic analyses of antithrombotic drug response variability.',
+        zh: '开展抗血栓药物反应差异的全基因组关联分析（GWAS）与药物基因组学分析。',
+      },
+    ],
+  },
+  {
+    role: { en: 'B.S. in Pharmaceutical Preparations', zh: '药剂学学士' },
+    date: 'Sep 2016 — Jun 2020',
+    org: 'Anhui University of Chinese Medicine · Anhui',
+    bullets: [
+      {
+        en: 'Thesis: anti-inflammatory mechanism of Polygonatum cyrtonema polysaccharide in RAW264.7 macrophages.',
+        zh: '论文方向：黄精多糖在 RAW264.7 巨噬细胞中的抗炎机制研究。',
+      },
+    ],
+  },
+];
+---
+<section id="experience" class="section section-alt">
+  <div class="section-inner">
+    <p class="section-label">
+      <span class="lang-en">02 — Experience</span>
+      <span class="lang-zh">02 — 经历</span>
+    </p>
+    <div class="timeline">
+      {items.map((item) => (
+        <article class="timeline-item reveal">
+          <div class="timeline-marker"><span></span></div>
+          <div class="timeline-content">
+            <div class="timeline-head">
+              <h3><span class="lang-en">{item.role.en}</span><span class="lang-zh">{item.role.zh}</span></h3>
+              <span class="timeline-date">{item.date}</span>
+            </div>
+            <p class="timeline-org">{item.org}</p>
+            <ul class="lang-en">
+              {item.bullets.map((b) => <li>{b.en}</li>)}
+            </ul>
+            <ul class="lang-zh">
+              {item.bullets.map((b) => <li>{b.zh}</li>)}
+            </ul>
+          </div>
+        </article>
+      ))}
+    </div>
+  </div>
+</section>

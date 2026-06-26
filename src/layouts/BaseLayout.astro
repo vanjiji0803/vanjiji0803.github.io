@@ -1,0 +1,82 @@
+---
+interface Props {
+  title: string;
+  description: string;
+}
+const { title, description } = Astro.props;
+---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title}</title>
+<meta name="description" content={description}>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="icon" href="data:,">
+<script is:inline>
+  (function () {
+    var savedTheme = localStorage.getItem('theme');
+    var theme = savedTheme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    document.documentElement.setAttribute('data-theme', theme);
+
+    var savedLang = localStorage.getItem('lang');
+    var lang = savedLang || ((navigator.language || '').toLowerCase().startsWith('zh') ? 'zh' : 'en');
+    document.documentElement.setAttribute('data-lang', lang);
+  })();
+</script>
+<style>@view-transition { navigation: auto; }</style>
+</head>
+<body>
+
+<canvas id="network-bg" aria-hidden="true"></canvas>
+
+<div class="cursor-dot" id="cursor-dot" aria-hidden="true"></div>
+<div class="cursor-ring" id="cursor-ring" aria-hidden="true"></div>
+
+<div class="grain-mark" aria-hidden="true">
+  <svg viewBox="0 0 40 40" width="40" height="40">
+    <rect x="2" y="2" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1"/>
+    <line x1="20" y1="0" x2="20" y2="8" stroke="currentColor" stroke-width="1"/>
+    <line x1="20" y1="32" x2="20" y2="40" stroke="currentColor" stroke-width="1"/>
+    <line x1="0" y1="20" x2="8" y2="20" stroke="currentColor" stroke-width="1"/>
+    <line x1="32" y1="20" x2="40" y2="20" stroke="currentColor" stroke-width="1"/>
+  </svg>
+</div>
+
+<header class="site-header">
+  <nav class="nav-wrap">
+    <a href="/" class="nav-mark">FZ</a>
+    <div class="nav-links">
+      <a href="/#about"><span class="lang-en">About</span><span class="lang-zh">关于</span></a>
+      <a href="/#experience"><span class="lang-en">Experience</span><span class="lang-zh">经历</span></a>
+      <a href="/#research"><span class="lang-en">Research</span><span class="lang-zh">研究</span></a>
+      <a href="/#projects"><span class="lang-en">Projects</span><span class="lang-zh">项目</span></a>
+      <a href="/blog/"><span class="lang-en">Blog</span><span class="lang-zh">博客</span></a>
+      <a href="/#contact"><span class="lang-en">Contact</span><span class="lang-zh">联系</span></a>
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle dark mode">☼/☽</button>
+      <button class="lang-toggle" id="lang-toggle" type="button" aria-label="Switch language">EN/中</button>
+    </div>
+  </nav>
+</header>
+
+<main>
+  <slot />
+</main>
+
+<footer class="site-footer">
+  <p>
+    <span class="lang-en">Fan Zhang &middot; built with Astro, a terminal panel that won't stop logging, and a blog post bot that drafts but doesn't publish without review.</span>
+    <span class="lang-zh">张帆 &middot; 用 Astro 搭建，配了一个停不下来的终端日志面板，还有一个只起草、绝不擅自发布的博客机器人。</span>
+  </p>
+</footer>
+
+<script src="../scripts/site.js"></script>
+</body>
+</html>
+
+<style is:global>
+  @import "../styles/global.css";
+</style>

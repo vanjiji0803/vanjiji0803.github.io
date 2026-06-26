@@ -1,0 +1,115 @@
+---
+---
+<section id="top" class="hero">
+  <div class="hero-inner">
+    <p class="eyebrow">
+      <span class="eyebrow-tag">
+        <span class="lang-en">[ status: online ]</span>
+        <span class="lang-zh">[ 状态：在线 ]</span>
+      </span>
+    </p>
+    <h1 class="hero-name">Fan Zhang</h1>
+    <p class="hero-role">
+      <span class="lang-en">Algorithm engineer building computer vision &amp; AI agents for surgical robotics — coming from pharmacy and bioinformatics into the operating room.</span>
+      <span class="lang-zh">算法工程师，专注手术机器人的计算机视觉与 AI Agent 开发——从药学、生物信息学走入手术室。</span>
+    </p>
+    <div class="hero-actions">
+      <a href="/#contact" class="btn btn-primary">
+        <span class="lang-en">Get in touch</span>
+        <span class="lang-zh">联系我</span>
+      </a>
+      <a href="/assets/Fan_Zhang_CV.pdf" class="btn btn-ghost" download>
+        <span class="lang-en">Download CV</span>
+        <span class="lang-zh">下载简历</span>
+      </a>
+    </div>
+  </div>
+  <div class="hero-frame terminal" aria-hidden="true">
+    <div class="terminal-bar">
+      <span class="terminal-dot terminal-dot-a"></span>
+      <span class="terminal-dot terminal-dot-b"></span>
+      <span class="terminal-dot terminal-dot-c"></span>
+      <span class="terminal-title">surg-agent@edge-igx:~</span>
+    </div>
+    <div class="terminal-body" id="terminal-body"></div>
+  </div>
+</section>
+
+<script>
+  const SCRIPT = [
+    { cls: 'tl-prompt', text: '$ python3 deploy_agent.py --device igx-0 --engine yolov8s_fp16.trt' },
+    { cls: 'tl-info', text: '[boot]   pipeline: video_in -> yolo_detect -> event_extract -> rag_query' },
+    { cls: 'tl-info', text: '[boot]   tensorrt engine loaded (yolov8s_fp16.trt, 23.1 MB)' },
+    { cls: 'tl-info', text: '[boot]   cuda graph warm-up... 312ms, ok' },
+    { cls: 'tl-detect', text: '[detect] frame 04821  instrument    0.94  (212,118,430,310)' },
+    { cls: 'tl-detect', text: '[detect] frame 04822  bleed_point   0.81  (340,180,500,300)' },
+    { cls: 'tl-agent', text: "[agent]  event: bleeding(severity=moderate) -> rag_query()" },
+    { cls: 'tl-agent', text: '[agent]  retrieved 3 protocol passages (cos 0.78–0.91)' },
+    { cls: 'tl-perf', text: '[perf]   fps 48.2  latency 20.7ms  gpu_mem 1.8/8.0GB' },
+  ];
+
+  const MAX_LINES = 9;
+  const TYPE_MS = 18;
+  const LINE_PAUSE_MS = 320;
+  const LOOP_PAUSE_MS = 1800;
+
+  const body = document.getElementById('terminal-body');
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function jitter(line) {
+    if (!line.text.startsWith('[perf]')) return line.text;
+    const fps = (46 + Math.random() * 4).toFixed(1);
+    const latency = (18 + Math.random() * 5).toFixed(1);
+    return `[perf]   fps ${fps}  latency ${latency}ms  gpu_mem 1.8/8.0GB`;
+  }
+
+  function renderStatic() {
+    if (!body) return;
+    body.innerHTML = '';
+    SCRIPT.forEach((line) => {
+      const row = document.createElement('div');
+      row.className = `tl-line ${line.cls}`;
+      row.textContent = line.text;
+      body.appendChild(row);
+    });
+  }
+
+  async function typeLine(text, cls) {
+    if (!body) return;
+    const row = document.createElement('div');
+    row.className = `tl-line ${cls}`;
+    const textSpan = document.createElement('span');
+    const cursor = document.createElement('span');
+    cursor.className = 'tl-cursor';
+    row.appendChild(textSpan);
+    row.appendChild(cursor);
+    body.appendChild(row);
+
+    for (let i = 0; i <= text.length; i++) {
+      textSpan.textContent = text.slice(0, i);
+      await new Promise((r) => setTimeout(r, TYPE_MS));
+    }
+    cursor.remove();
+
+    while (body.children.length > MAX_LINES) {
+      body.firstElementChild?.remove();
+    }
+  }
+
+  async function loop() {
+    while (true) {
+      for (const line of SCRIPT) {
+        await typeLine(jitter(line), line.cls);
+        await new Promise((r) => setTimeout(r, LINE_PAUSE_MS));
+      }
+      await new Promise((r) => setTimeout(r, LOOP_PAUSE_MS));
+      if (body) body.innerHTML = '';
+    }
+  }
+
+  if (reduceMotion) {
+    renderStatic();
+  } else {
+    loop();
+  }
+</script>

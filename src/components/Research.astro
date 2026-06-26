@@ -1,0 +1,90 @@
+---
+const publications = [
+  {
+    title: 'Finding the Sweet Spot: Systematic Analysis and Robotic Validation of Synthetic Data for Few-Shot Endoscopic Needle Detection',
+    meta: { en: 'Manuscript under revision', zh: '稿件修订中' },
+  },
+  {
+    title: 'Genetic Polymorphisms Associated with Prothrombin Time and Activated Partial Thromboplastin Time in Chinese Healthy Population',
+    meta: { en: 'Genes (Basel), 2022 · first author', zh: 'Genes (Basel), 2022 · 第一作者' },
+  },
+  {
+    title: 'Predicting Bleeding Events with Machine Learning in Nonvalvular Atrial Fibrillation Patients Using Direct Oral Anticoagulants',
+    meta: { en: 'Manuscript submitted', zh: '稿件已投' },
+  },
+  {
+    title: 'Identification of Genetic Biomarkers Associated with Pharmacokinetics and Pharmacodynamics of Apixaban in Chinese Healthy Volunteers',
+    meta: { en: 'Expert Opin Drug Metab Toxicol, 2023', zh: 'Expert Opin Drug Metab Toxicol, 2023' },
+  },
+];
+
+const patents = [
+  {
+    title: 'Method, Device, Electronic Equipment, and Storage Medium for Determining Intraoperative Bleeding Point Trajectory',
+    meta: { en: 'Granted · first inventor', zh: '已授权 · 第一发明人' },
+  },
+  {
+    title: 'Method, Device, Electronic Equipment, and Storage Medium for Endoscopic Surgical Smoke Detection',
+    meta: { en: 'Granted · first inventor', zh: '已授权 · 第一发明人' },
+  },
+  {
+    title: 'Two further patents related to surgical AI agent systems',
+    meta: { en: 'Filing in progress', zh: '申请中' },
+  },
+];
+---
+<section id="research" class="section">
+  <div class="section-inner">
+    <p class="section-label">
+      <span class="lang-en">03 — Research</span>
+      <span class="lang-zh">03 — 研究</span>
+    </p>
+
+    <div class="research-block">
+      <h3 class="research-heading">
+        <span class="lang-en">Current focus</span>
+        <span class="lang-zh">当前方向</span>
+      </h3>
+      <p class="research-focus-text lang-en">
+        I'm interested in medical AI broadly, and especially in making AI systems trustworthy enough for the people who actually have to rely on them in a procedure. It's the direction I want to keep building my career around.
+      </p>
+      <p class="research-focus-text lang-zh">
+        我对医疗 AI 这个方向很感兴趣，尤其关心如何让 AI 系统真正值得在手术中依赖它的人信任。这也是我想长期投入的职业方向。
+      </p>
+    </div>
+
+    <div class="research-columns">
+      <div class="research-col">
+        <h3 class="research-heading">
+          <span class="lang-en">Publications</span>
+          <span class="lang-zh">论文</span>
+        </h3>
+        <ul class="pub-list">
+          {publications.map((p) => (
+            <li class="reveal">
+              <span class="pub-title">{p.title}</span>
+              <span class="pub-meta lang-en">{p.meta.en}</span>
+              <span class="pub-meta lang-zh">{p.meta.zh}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div class="research-col">
+        <h3 class="research-heading">
+          <span class="lang-en">Patents</span>
+          <span class="lang-zh">专利</span>
+        </h3>
+        <ul class="pub-list">
+          {patents.map((p) => (
+            <li class="reveal">
+              <span class="pub-title">{p.title}</span>
+              <span class="pub-meta lang-en">{p.meta.en}</span>
+              <span class="pub-meta lang-zh">{p.meta.zh}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>

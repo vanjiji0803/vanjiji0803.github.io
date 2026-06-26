@@ -1,0 +1,63 @@
+---
+const skills = [
+  {
+    title: { en: 'Computer vision & ML', zh: '计算机视觉与机器学习' },
+    body: {
+      en: 'Deep learning, multi-task & few-shot learning, model development and evaluation. PyTorch, OpenCV, scikit-learn.',
+      zh: '深度学习、多任务与小样本学习、模型开发与评估。PyTorch、OpenCV、scikit-learn。',
+    },
+  },
+  {
+    title: { en: 'AI agents & LLM', zh: 'AI Agent 与大模型' },
+    body: {
+      en: 'RAG retrieval system design, prompt engineering, and multi-step agent flow design. LLM API integration (OpenAI, Claude, and domestic models).',
+      zh: 'RAG 检索系统设计、prompt 工程与多步 agent 流程设计。大模型 API 集成（OpenAI、Claude 及国产模型）。',
+    },
+  },
+  {
+    title: { en: 'Edge deployment', zh: '边缘部署' },
+    body: {
+      en: 'NVIDIA IGX/AGX, Holoscan, TensorRT, DeepStream — real-time inference and long-duration stability testing on surgical hardware.',
+      zh: 'NVIDIA IGX/AGX、Holoscan、TensorRT、DeepStream —— 在手术硬件上进行实时推理与长时长稳定性测试。',
+    },
+  },
+  {
+    title: { en: 'Biomedical data', zh: '生物医学数据' },
+    body: {
+      en: 'Endoscopic image analysis, surgical scene understanding, medical information extraction, GWAS and pharmacogenomic analysis.',
+      zh: '内窥镜图像分析、手术场景理解、医学信息抽取、GWAS 与药物基因组学分析。',
+    },
+  },
+  {
+    title: { en: 'Programming', zh: '编程' },
+    body: {
+      en: 'Python (proficient), R (proficient), C++ (basic). Git, Blender, Unity.',
+      zh: 'Python（熟练）、R（熟练）、C++（基础）。Git、Blender、Unity。',
+    },
+  },
+  {
+    title: { en: 'Evaluation & methodology', zh: '评估与方法论' },
+    body: {
+      en: 'Designing evaluation frameworks for LLM and CV outputs — measuring fine-grained reliability under real-world variability, not just benchmark accuracy. Statistical rigor carried over from GWAS and pharmacogenomic analysis.',
+      zh: '设计面向大模型与计算机视觉输出的评估框架——细粒度衡量真实场景变异性下的可靠性，而不只是 benchmark 上的准确率。统计严谨性延续自 GWAS 与药物基因组学分析的训练。',
+    },
+  },
+];
+---
+<section id="skills" class="section">
+  <div class="section-inner">
+    <p class="section-label">
+      <span class="lang-en">05 — Skills</span>
+      <span class="lang-zh">05 — 技能</span>
+    </p>
+    <div class="skills-grid">
+      {skills.map((s) => (
+        <div class="skill-card reveal">
+          <h4><span class="lang-en">{s.title.en}</span><span class="lang-zh">{s.title.zh}</span></h4>
+          <p class="lang-en">{s.body.en}</p>
+          <p class="lang-zh">{s.body.zh}</p>
+        </div>
+      ))}
+    </div>
+  </div>
+</section>
