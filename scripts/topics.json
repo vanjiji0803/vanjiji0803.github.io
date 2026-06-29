@@ -16,5 +16,7 @@
     "Patent vs. paper: what each actually requires for surgical AI work",
     "Agent architectures for the OR: detection, extraction, retrieval, and where they break"
   ],
-  "used": []
+  "used": [
+    "Evaluating surgical CV models under domain shift: why offline accuracy lies"
+  ]
 }
