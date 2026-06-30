@@ -10,6 +10,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TOPICS_PATH = path.join(__dirname, 'topics.json');
 const BLOG_DIR = path.join(__dirname, '..', 'src', 'content', 'blog');
 const DRY_RUN = process.argv.includes('--dry-run');
+const PUBLISH = process.argv.includes('--publish');
 
 const SYSTEM_PROMPT = `You are ghostwriting a technical blog post for Fan Zhang, an algorithm engineer who builds computer vision and AI agents for surgical robotics at Weijing Medical Surgical Robotics Research Institute. His background: pharmacy (B.S.) -> bioinformatics/clinical pharmacy (M.S., Peking University, GWAS and pharmacogenomics) -> surgical computer vision and edge AI deployment (YOLO-based bleeding/smoke/instrument detection, NVIDIA IGX/AGX + Holoscan + TensorRT, RAG-based surgical agent "Surg-Agent").
 
@@ -97,7 +98,7 @@ async function main() {
     `description: "${post.description.replace(/"/g, '\\"')}"`,
     `date: ${date}`,
     `tags: [${post.tags.map((t) => `"${t}"`).join(', ')}]`,
-    'draft: true',
+    `draft: ${PUBLISH ? 'false' : 'true'}`,
     '---',
     '',
     post.body,

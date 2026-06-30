@@ -1,37 +1,48 @@
-name: Draft weekly blog post
+name: Generate and publish weekly blog post
 
 on:
   schedule:
-    - cron: '0 1 * * 1' # Monday 01:00 UTC
+    - cron: '0 1 * * *' # Daily 01:00 UTC / 09:00 Beijing
   workflow_dispatch:
 
 permissions:
   contents: write
-  pull-requests: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
 
 jobs:
-  draft:
+  generate-and-publish:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Generate draft post
+          cache: npm
+      - run: npm ci
+      - name: Generate published post
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-        run: node scripts/generate-blog-post.mjs
-      - name: Open PR with the draft
-        uses: peter-evans/create-pull-request@v6
+        run: node scripts/generate-blog-post.mjs --publish
+      - name: Commit generated post
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/content/blog/*.md scripts/topics.json
+          git diff --cached --quiet && exit 0
+          git commit -m "blog: publish weekly post"
+          git push
+      - run: npm run build
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
         with:
-          commit-message: 'blog: weekly draft post'
-          title: 'Weekly blog draft'
-          body: |
-            Auto-generated draft from the weekly blog workflow. `draft: true` in the
-            frontmatter — it will not appear on the live site until reviewed, edited
-            as needed, and the draft flag is removed.
-          branch: auto-blog-draft
-          labels: auto-blog-draft
-          add-paths: |
-            src/content/blog/*.md
-            scripts/topics.json
+          path: dist
+      - id: deployment
+        uses: actions/deploy-pages@v4
