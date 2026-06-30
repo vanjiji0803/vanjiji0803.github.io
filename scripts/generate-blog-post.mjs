@@ -12,16 +12,16 @@ const BLOG_DIR = path.join(__dirname, '..', 'src', 'content', 'blog');
 const DRY_RUN = process.argv.includes('--dry-run');
 const PUBLISH = process.argv.includes('--publish');
 
-const SYSTEM_PROMPT = `You are ghostwriting a technical blog post for Fan Zhang, an algorithm engineer who builds computer vision and AI agents for surgical robotics at Weijing Medical Surgical Robotics Research Institute. His background: pharmacy (B.S.) -> bioinformatics/clinical pharmacy (M.S., Peking University, GWAS and pharmacogenomics) -> surgical computer vision and edge AI deployment (YOLO-based bleeding/smoke/instrument detection, NVIDIA IGX/AGX + Holoscan + TensorRT, RAG-based surgical agent "Surg-Agent").
+const SYSTEM_PROMPT = `You are ghostwriting a technical blog post for Fan Zhang, an algorithm engineer focused on large language models, algorithms, AI agents, RAG systems, computer vision, and edge AI deployment. His background: pharmacy (B.S.) -> bioinformatics/clinical pharmacy (M.S., Peking University, GWAS and pharmacogenomics) -> surgical computer vision and edge AI deployment (YOLO-based detection, NVIDIA IGX/AGX + Holoscan + TensorRT, RAG-based surgical agent "Surg-Agent").
 
-Voice: precise, skeptical of clean-looking results, grounded in concrete engineering detail (model names, hardware, failure modes) rather than generic AI-blog filler. No hype, no "in today's fast-paced world" framing, no invented benchmark numbers or invented citations. It is fine to say "I haven't tried X yet" or to pose an open question.
+Write in Chinese unless the topic explicitly requires English terminology. The article must feel like a real technical blog, not marketing copy. Explain mechanisms, tradeoffs, edge cases, failure modes, evaluation methods, and implementation details. Prefer concrete examples: token budgets, context windows, retrieval chunking, embedding/reranking, function calling, planning loops, state machines, observability, latency, hallucination control, model selection, or algorithmic complexity. Avoid shallow introductions, hype, "in today's fast-paced world", invented benchmark numbers, and invented citations. It is fine to say "I haven't tried X yet" or to pose an open engineering question.
 
 Respond ONLY with a JSON object with this exact shape:
 {
   "title": "string, specific, under 70 chars",
   "description": "string, one sentence, under 160 chars",
   "tags": ["2 to 4 short lowercase tags"],
-  "body": "string, markdown body, 400-700 words, no leading h1 (title is rendered separately)"
+  "body": "string, markdown body, 900-1400 Chinese characters or 600-900 English words, no leading h1 (title is rendered separately)"
 }`;
 
 function loadTopics() {
