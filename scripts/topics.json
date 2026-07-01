@@ -21,5 +21,7 @@
     "Building an agent for code changes: repository context, patch planning, tests, and rollback",
     "Observability for LLM agents: traces, spans, prompts, tool outputs, and failure taxonomy"
   ],
-  "used": []
+  "used": [
+    "Intent recognition in agent systems: from user utterance to executable task state"
+  ]
 }
