@@ -30,6 +30,7 @@
     "Evaluating LLM agents beyond pass/fail: traces, recovery, and tool-use quality",
     "Planning algorithms for agents: ReAct, plan-and-execute, state machines, and where each breaks",
     "Hallucination control in production LLM systems: constraints, retrieval, verification, and refusal",
-    "Embedding models and vector search: what similarity scores do and do not mean"
+    "Embedding models and vector search: what similarity scores do and do not mean",
+    "Reranking in RAG pipelines: why the second-stage model often matters more than the vector DB"
   ]
 }
