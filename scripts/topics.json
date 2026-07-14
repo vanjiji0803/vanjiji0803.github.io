@@ -33,6 +33,7 @@
     "Embedding models and vector search: what similarity scores do and do not mean",
     "Reranking in RAG pipelines: why the second-stage model often matters more than the vector DB",
     "Latency budgets for LLM applications: streaming, caching, batching, and model routing",
-    "Prompt templates as software interfaces: versioning, regression tests, and observability"
+    "Prompt templates as software interfaces: versioning, regression tests, and observability",
+    "Agent memory design: episodic logs, semantic memory, working memory, and forgetting"
   ]
 }
