@@ -1,76 +1,54 @@
 ---
 title: "Evaluating LLM agents beyond pass/fail: traces, recovery, and tool-use quality"
 description: "A practical guide to evaluating agent behavior using traces, recovery patterns, and tool-use quality metrics."
-date: 2026-07-06
-tags: ["llm-agents", "evaluation", "tool-use", "trace-analysis"]
+date: 2026-07-29
+tags: ["llm-agents", "evaluation", "tool-use", "observability"]
 draft: false
 ---
 
-Most LLM agent evaluations still rely on binary pass/fail — did the agent complete the task? But in production, an agent that fails gracefully and recovers is often more valuable than one that succeeds once but crashes on edge cases. Over the past few months, I've been building and evaluating surgical agents (like Surg-Agent) and general-purpose RAG agents. Here's what I've learned about going beyond pass/fail.
+When we evaluate LLM agents, most teams default to a simple pass/fail on the final output. But in production, an agent that fails gracefully can be more valuable than one that succeeds by luck. I've been thinking about three axes that go beyond binary success: trace quality, recovery behavior, and tool-use quality.
 
-## Traces: The Raw Material
+## Trace Quality
 
-An agent trace is a structured log of every step: the input, the LLM call (including raw prompt and completion), tool invocations (with arguments and outputs), and any errors. I store traces as JSON lines, one per step. A minimal schema:
+A trace is the complete record of an agent's reasoning steps, tool calls, and intermediate outputs. Instead of just checking the final answer, we can evaluate the trace itself. For example, does the agent decompose a complex query into sensible sub-tasks? Are the tool calls logically ordered? One metric is "step relevance": for each tool call, we can compute the cosine similarity between the tool's input and the current context. A low similarity might indicate hallucination or off-track reasoning.
 
-```json
-{
-  "step_id": 3,
-  "type": "tool_call",
-  "tool_name": "retrieve",
-  "input": {"query": "surgical site infection rate"},
-  "output": "...",
-  "latency_ms": 450,
-  "error": null
-}
-```
+Another metric is "information flow": does the agent reuse outputs from earlier steps? You can measure the overlap between the output of step N and the input of step N+1. If there's no overlap, the agent might be ignoring its own previous work.
 
-Traces let you compute metrics like:
-- **Tool call success rate**: fraction of tool calls that returned without error.
-- **Recovery rate**: after an error, how often does the next step succeed?
-- **Loop detection**: repeated identical tool calls (e.g., same query, same arguments) often indicate hallucination or stuck reasoning.
+## Recovery Behavior
 
-I use a simple heuristic: if the same tool with the same arguments appears more than twice consecutively, flag it as a loop. In our surgical agent, loops often happen when the LLM keeps calling `get_patient_data` with the same ID because it doesn't integrate the result into its context.
+Agents will make mistakes. The question is how they recover. I categorize recovery into three levels:
 
-## Recovery Patterns
+1. **No recovery**: The agent fails and stops, or produces a wrong answer.
+2. **Retry with same approach**: The agent re-calls the same tool with slightly different parameters (e.g., changing a search query). This is basic.
+3. **Strategy shift**: The agent recognizes the failure (e.g., tool returns empty) and switches to a different tool or approach. This is much harder.
 
-Not all failures are equal. I categorize recovery into:
-- **Self-correction**: agent notices an error (e.g., tool returned empty) and rephrases the query.
-- **Fallback**: agent switches to a simpler tool or asks for clarification.
-- **Crash**: agent repeats the same failing action until max steps.
-
-To measure recovery quality, I compute a **recovery score**:
-
-```
-recovery_score = (number of successful steps after error) / (total steps after first error)
-```
-
-A score near 1 means the agent recovered well; near 0 means it spiraled. For example, an agent that calls `retrieve` with an empty query, gets an error, then correctly adds keywords gets a high score. One that keeps calling with the same empty query gets a low score.
+To evaluate recovery, you can inject controlled errors into the environment. For example, make a search tool return no results for a known query, or make an API return an error code. Then measure: does the agent detect the error? Does it try an alternative? How many steps does it waste?
 
 ## Tool-Use Quality
 
-Pass/fail doesn't capture whether the agent used tools appropriately. I track:
-- **Tool diversity**: how many different tools were used. An agent that only calls one tool (e.g., always `search`) may be underutilizing capabilities.
-- **Argument quality**: for each tool, I check if the arguments are well-formed. For a `retrieve` tool, is the query too short (<5 chars) or too long (>500 chars)? For a `calculator` tool, is the expression syntactically valid?
-- **Redundant calls**: if the agent calls `get_weather` for the same city twice in a row, that's inefficient. I count redundant calls per session.
+Tool-use quality is about efficiency and correctness. I track:
 
-I built a small evaluation harness that replays traces and computes these metrics. For each test case, I produce a report:
+- **Tool selection accuracy**: Did the agent call the right tool for the task? For a math problem, calling a calculator is correct; calling a web search is wasteful.
+- **Parameter quality**: Are the tool inputs well-formed? For a SQL tool, are the queries syntactically correct? For a search tool, are the keywords specific enough?
+- **Redundancy**: How many tool calls are redundant? If the agent calls the same tool with the same parameters twice, that's a failure.
+- **Latency impact**: Each tool call adds latency. We can compute a "cost per successful step" by dividing total latency by the number of useful steps.
+
+## Putting It Together
+
+I've been experimenting with a simple evaluation framework that combines these metrics. For each agent run, we collect a trace, then compute a composite score:
 
 ```
-Task: "Find the latest guidelines for antibiotic prophylaxis"
-Success: true
-Steps: 8
-Tool calls: 5 (retrieve:3, summarize:1, verify:1)
-Tool success rate: 4/5 (80%)
-Recovery score: 0.75 (recovered after 1 error)
-Redundant calls: 1 (retrieve with same query twice)
+composite_score = (trace_quality * w1) + (recovery_score * w2) + (tool_quality * w3)
 ```
 
-## Practical Tips
+Where weights are tuned per domain. For a customer support agent, recovery might be weighted higher. For a data analysis agent, tool quality matters more.
 
-- **Instrument your agent early**: add trace logging from day one. It's painful to retrofit.
-- **Normalize latencies**: tool call latency varies; track p50/p95 separately.
-- **Human review samples**: metrics are noisy. I manually review 20% of traces to catch false positives (e.g., a loop that's actually a valid repeated check).
+One open question: how to automate recovery scoring? Currently I use a mix of rule-based checks (e.g., did the agent call a different tool after an error?) and LLM-as-judge to evaluate the strategy shift. The LLM judge is expensive but gives more nuanced feedback.
 
-One open question: how do you evaluate multi-step reasoning where the agent must chain tools? I've experimented with a "plan adherence" metric — comparing the agent's actual tool sequence to a gold-standard plan — but plans are hard to define for open-ended tasks.
+Another challenge: traces can be very long. For a 10-step agent, the trace might be 10k tokens. Summarizing the trace for evaluation is itself a research problem. I've tried using a smaller model (e.g., Llama 3.2 3B) to produce a structured summary of the trace, then evaluate that summary.
 
-For now, I rely on trace analysis + recovery scoring + tool-use quality. It's not perfect, but it's far more informative than pass/fail.
+## Final Thoughts
+
+Pass/fail evaluation hides the agent's behavior. By looking at traces, recovery patterns, and tool-use quality, we can identify specific failure modes: is the agent bad at detecting errors? Does it overuse a particular tool? Does it forget context? These insights drive targeted improvements.
+
+I haven't yet explored multi-agent scenarios where traces become even more complex. That's next on my list.
