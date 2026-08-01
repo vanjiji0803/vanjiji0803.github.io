@@ -1,44 +1,51 @@
 ---
 title: "Embedding models and vector search: what similarity scores do and do not mean"
-description: "A technical deep dive into the meaning and pitfalls of cosine similarity in vector search for RAG systems."
-date: 2026-07-10
-tags: ["rag", "embedding", "vector-search", "similarity"]
+description: "A practical look at how embedding similarity behaves, why scores are not probabilities, and how to avoid common pitfalls in RAG."
+date: 2026-08-01
+tags: ["embeddings", "vector-search", "rag", "similarity"]
 draft: false
 ---
 
-When building a RAG system, the typical pipeline is: chunk documents, embed each chunk into a vector, store in a vector database, then at query time embed the query and retrieve the top-k chunks by cosine similarity. The similarity score is often treated as a measure of relevance or confidence. But is it?
+When I first started building RAG systems, I treated the cosine similarity score from a vector search as a confidence level. If it was 0.92, I assumed the chunk was highly relevant. If it was 0.45, I assumed it was irrelevant. But after debugging several failed retrievals, I realized that similarity scores are far more nuanced. They don't mean what you think they mean.
 
-## What cosine similarity actually measures
+## What similarity scores actually measure
 
-Cosine similarity between two vectors **u** and **v** is defined as **u·v / (||u|| ||v||)**. It measures the cosine of the angle between them, ignoring magnitude. In embedding space, this captures directional alignment. For sentence-BERT models fine-tuned with contrastive loss, similar texts are mapped to nearby directions. So a high cosine similarity (close to 1) means the vectors point in roughly the same direction.
+Embedding models map text to a high-dimensional vector space. The cosine similarity between two vectors measures the cosine of the angle between them. It's a geometric measure, not a semantic one. Two chunks can have high cosine similarity because they share surface-level vocabulary, not because they share meaning. For example, "The cat sat on the mat" and "The dog sat on the rug" might have a high similarity because of the overlapping words "sat" and "on", even though they are about different animals.
 
-But here's the catch: the absolute value of the similarity is not calibrated. A score of 0.8 in one embedding model may correspond to very different semantic similarity than 0.8 in another. Even within the same model, the distribution of scores depends on the data domain. For example, in a medical corpus, two paragraphs about "hypertension" might score 0.9, while two paragraphs about "machine learning" might score only 0.7 for equally close semantic relationships. The model's training data skews the score distribution.
+Moreover, the absolute value of the score depends heavily on the embedding model and the normalization used. Some models produce scores that cluster around 0.7-0.9 for unrelated texts, while others produce a wider range. I've seen models where random pairs of sentences have a cosine similarity of 0.8. In that case, a score of 0.85 is barely above random, not a strong signal.
 
-## Failure modes of threshold-based retrieval
+## Why scores are not probabilities
 
-A common mistake is to set a fixed similarity threshold (e.g., 0.7) and discard all chunks below it. This fails because:
+A common mistake is to interpret a similarity score as the probability that the chunk is relevant. That's wrong for several reasons:
 
-1. **Domain shift**: The threshold that works for general web text may be too high for specialized scientific text where embeddings are more spread out.
-2. **Query ambiguity**: A vague query like "tell me about AI" may have many chunks with moderate scores (0.6-0.7), while a specific query like "explain attention is all you need" may have one chunk at 0.85 and the rest below 0.3. A fixed threshold would either miss the relevant chunk or include too many irrelevant ones.
-3. **Chunk length variation**: Longer chunks tend to have higher norm and may produce slightly different score distributions. Some embedding models normalize vectors, but the issue of score scale remains.
+1. **No calibration**: The score is not calibrated to any ground truth. There's no guarantee that a score of 0.9 corresponds to a 90% chance of relevance.
+2. **Relative vs absolute**: The score is only meaningful relative to other scores in the same collection. A score of 0.7 might be the best match for one query but the worst for another.
+3. **Dimensionality collapse**: In high-dimensional spaces, distances become less discriminative. The curse of dimensionality means that for any given query, many chunks may have similar scores, making the top-1 not much better than random.
 
-## What about other similarity metrics?
+## Practical implications for RAG
 
-Inner product (dot product) is another common metric. It is unbounded and heavily influenced by vector magnitude. In practice, many vector databases normalize embeddings to unit length, making cosine similarity equivalent to inner product. So the same caveats apply.
+In a RAG pipeline, you often retrieve the top-k chunks and feed them to the LLM. If you rely on a score threshold to decide whether to include a chunk, you'll likely make mistakes. Instead, I've found it more reliable to:
 
-Euclidean distance is also used. For normalized vectors, it is monotonically related to cosine similarity (d² = 2 - 2 cos θ). So again, no free lunch.
+- **Use relative ranking**: Always retrieve a fixed number of chunks (e.g., top-5) and let the LLM decide which are relevant. The LLM can handle noisy context better than a hard threshold.
+- **Evaluate retrieval quality separately**: Use metrics like recall@k, precision@k, and MRR (Mean Reciprocal Rank) on a labeled dataset. This tells you how well your retrieval is working, independent of the LLM.
+- **Calibrate if needed**: If you really need a threshold, you can calibrate it empirically. Collect a set of queries with known relevant chunks, compute similarity scores, and find a threshold that maximizes F1. But remember, this threshold is specific to your domain and model.
 
-## Practical recommendations
+## Failure modes and edge cases
 
-1. **Don't use absolute scores as confidence**: Instead, use relative ranking. The top-3 chunks are likely more relevant than the bottom-3, but a score of 0.9 doesn't mean "very confident".
-2. **Use reranking**: After retrieving top-k by embedding similarity, apply a cross-encoder reranker. Cross-encoders produce more calibrated relevance scores (often in [0,1]) and can better distinguish fine-grained relevance.
-3. **Consider hybrid search**: Combine vector similarity with keyword (BM25) or other signals. This helps when the embedding model fails on rare terms or out-of-domain queries.
-4. **Evaluate on your data**: Build a small test set of query-chunk relevance judgments. Measure recall@k and precision@k. Don't rely on model leaderboard numbers.
+One failure mode I encountered was with domain-specific vocabulary. My surgical agent uses embeddings trained on general text, so medical terms like "cholecystectomy" and "laparoscopic" might be embedded close to each other, but not necessarily in the way a surgeon would expect. This can cause false positives.
+
+Another edge case is when the query is very short. A query like "pain" will have high similarity to many chunks about pain, but the most relevant one might be buried. In such cases, query expansion (e.g., adding synonyms or context) can help.
+
+Also, beware of the embedding model's token limit. If your chunks are longer than the model's max length, truncation can lose important information, making the embedding less representative. I usually chunk documents into 300-500 tokens, which fits most models.
+
+## What to do instead
+
+Instead of relying on raw scores, I now use a two-stage retrieval: first, vector search to get a candidate set, then a reranker (like a cross-encoder) to refine the order. The reranker gives a more reliable relevance score, but it's slower, so I only apply it to the top-50 candidates.
+
+For evaluation, I build a small test set with queries and relevant document IDs. I compute recall@k and see how often the correct chunk appears in the top-k. This gives me a concrete number to optimize. I also monitor the distribution of similarity scores for my corpus to understand the baseline.
 
 ## Open questions
 
-I haven't experimented with score normalization techniques like Platt scaling or isotonic regression for embedding scores. Could we calibrate cosine similarity to be more interpretable? Possibly, but the calibration would be dataset-dependent and might not generalize.
+I'm still exploring how to make similarity scores more interpretable. One idea is to train a calibration model that maps scores to probabilities using a logistic regression on labeled data. But I haven't tried it yet. Another question is whether we can use the score distribution to detect out-of-domain queries. If a query's top score is much lower than the typical top scores, it might be out-of-domain. But this is heuristic and not robust.
 
-Another question: for multi-vector retrieval (e.g., ColBERT), the similarity is computed as a sum of max similarities over token-level embeddings. Does that produce more meaningful scores? Early evidence suggests yes, but at higher storage and compute cost.
-
-In summary, treat cosine similarity as a ranking signal, not an absolute measure of relevance. Your RAG system's quality depends more on chunking strategy, retrieval diversity, and reranking than on the exact similarity threshold.
+In summary, treat similarity scores as a rough ranking signal, not a measure of truth. Use them to retrieve candidates, but always validate with downstream tasks. And when in doubt, evaluate, evaluate, evaluate.
