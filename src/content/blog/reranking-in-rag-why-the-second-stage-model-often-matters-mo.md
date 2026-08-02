@@ -1,56 +1,56 @@
 ---
 title: "Reranking in RAG: Why the Second-Stage Model Often Matters More Than the Vector DB"
-description: "Explaining why reranking, not vector search, is the bottleneck in RAG quality, with concrete tradeoffs and implementation tips."
-date: 2026-07-11
+description: "Exploring why reranking can outperform vector search, with practical tips on implementation and evaluation."
+date: 2026-08-02
 tags: ["rag", "reranking", "retrieval", "llm"]
 draft: false
 ---
 
-## The Reranking Bottleneck
+In RAG pipelines, we often obsess over the vector database: choosing the right embedding model, tuning index parameters, and optimizing HNSW graphs. But in my experience, the single biggest retrieval quality lever is often the reranker—a second-stage model that re-scores the top-k candidates from the vector search. Here's why, and how to implement it effectively.
 
-In RAG pipelines, we obsess over embedding models, vector DBs, and chunking strategies. But in my experience, the reranking stage is where the real quality leverage lies. A good reranker can salvage mediocre retrieval; a bad one can sink excellent retrieval.
+## Why Reranking Matters
 
-## Why Reranking Matters More
+Vector search is a fast but lossy pre-filter. Embeddings capture semantic similarity, but they compress meaning into a fixed vector, losing nuance like negation, temporal constraints, or specific entity relationships. A reranker, typically a cross-encoder, takes the query and a document together and outputs a relevance score. This interaction allows it to capture fine-grained signals that bi-encoders miss.
 
-Vector search is fundamentally a nearest-neighbor problem in embedding space. It's fast, but it suffers from the "curse of dimensionality" and the fact that cosine similarity doesn't always align with relevance. The top-1 result might be semantically close but contextually wrong.
+For example, query: "Which drug inhibits CYP3A4?" A bi-encoder might rank a document about CYP3A4 metabolism higher than one explicitly listing inhibitors, because the embedding is dominated by the enzyme name. A cross-encoder can see the query's intent and penalize the irrelevant doc.
 
-A reranker, typically a cross-encoder, jointly encodes the query and each candidate document. This allows it to capture nuanced relevance signals that are invisible to a bi-encoder (embedding) model. For example, a query "side effects of ibuprofen" and a document about "ibuprofen contraindications" might have high cosine similarity, but a reranker can distinguish between side effects and contraindications.
+## The Two-Stage Retrieval Pattern
 
-## Concrete Tradeoffs
+A typical pipeline:
+1. **Bi-encoder recall**: Embed query, retrieve top-100 (or top-50) from vector DB.
+2. **Cross-encoder rerank**: Score each candidate, take top-5 or top-10.
 
-**Latency vs. Quality**: Adding a reranker increases latency linearly with the number of candidates. If you retrieve 100 documents and rerank all of them, expect 100-500ms extra (depending on model size). A common trick: retrieve more candidates (e.g., 200) but only rerank the top 50. This gives the reranker more raw material while keeping latency manageable.
+Why not just use the reranker on the whole corpus? Because cross-encoders are O(N) per query—too slow for large corpora. The vector DB narrows the candidate set to a manageable size.
 
-**Model Selection**: Small cross-encoders like `ms-marco-MiniLM-L-2-v2` are fast (10ms per pair) but less accurate. Larger ones like `BAAI/bge-reranker-v2-m3` are slower (50ms per pair) but significantly better. For production, I often use a two-tier approach: a fast reranker to prune from 100 to 20, then a heavy reranker for the final top-5.
+## Model Selection and Tradeoffs
 
-**Chunking Interaction**: Reranking is sensitive to chunk granularity. If chunks are too small (e.g., 128 tokens), the reranker lacks context. If too large (e.g., 1024 tokens), the model's attention dilutes. I've found 256-512 tokens works best for most domains.
+Rerankers come in various sizes and speeds. Popular choices: `cross-encoder/ms-marco-MiniLM-L-6-v2` (fast, ~10ms on CPU), `BAAI/bge-reranker-base` (better quality, ~50ms), or `bge-reranker-large` (~200ms). For production, latency matters. I've used small models on CPU for low-traffic internal tools, and larger ones on GPU with batching for high-QPS services.
 
-## Failure Modes
+Key tradeoff: quality vs. latency. A small reranker might only improve nDCG by 5%, while a large one gives 15%, but at 10x latency. Measure your own data.
 
-1. **Position Bias**: Rerankers can over-rely on the position of relevant text within the chunk. If the answer is in the middle, it might be missed. Mitigation: use sliding windows or multi-query expansion.
+## Implementation Details
 
-2. **Overconfidence**: Rerankers produce a relevance score, but the distribution can be sharp. A score of 0.9 vs 0.89 might not be meaningful. I normalize scores across the candidate set and use a threshold (e.g., 0.5) to discard low-scoring documents.
+- **Candidate count**: Too few (e.g., 10) risks missing relevant docs; too many (e.g., 200) slows reranking. Start with 50-100.
+- **Batching**: Rerankers are more efficient when scoring in batches. Use `model.encode` with a batch size of 32 or 64.
+- **Normalization**: Scores are not probabilities. Use them for ranking, not for thresholds. If you need a threshold, calibrate on a validation set.
+- **Hybrid retrieval**: Combine vector search with BM25 (keyword) to improve recall, then rerank the union. This is often better than either alone.
 
-3. **Domain Mismatch**: A reranker trained on MS MARCO (web search) may perform poorly on biomedical or code documents. Fine-tuning on domain-specific data (even 1000 examples) can yield dramatic improvements.
+## Evaluation: Don't Trust Your Gut
 
-## Evaluation
+You need a labeled dataset. Create a set of (query, relevant_doc_ids) from your domain. Then compute metrics:
+- **Recall@k**: How often the relevant doc is in the top-k after reranking.
+- **MRR** or **nDCG**: For ranking quality.
 
-Standard retrieval metrics like Recall@k and MRR are useful but don't capture end-to-end quality. I prefer to measure:
-- **Answer Faithfulness**: Does the generated answer rely on the top reranked documents? (using NLI models)
-- **Context Relevancy**: Are the reranked documents actually relevant to the query? (human eval or LLM-as-judge)
-- **Latency P95**: Reranking is often the latency bottleneck.
+Compare: vector-only vs. vector+rerank. I've seen reranking boost nDCG@10 from 0.6 to 0.85 on medical QA data. But it's not guaranteed—test on your own.
 
-## Implementation Tips
+## Failure Modes and Edge Cases
 
-- **Batching**: Rerank candidates in batches (e.g., 8 at a time) to utilize GPU efficiently.
-- **Caching**: Cache reranking results for repeated queries (common in conversational RAG).
-- **Fallback**: If reranker crashes (OOM, timeout), fall back to vector search results.
+- **Reranker bias**: If your reranker was trained on general web data, it may misrank domain-specific queries. Fine-tune on your data if possible.
+- **Short vs. long documents**: Cross-encoders truncate long texts. Truncation can lose key info. Consider chunking documents and reranking chunks, then aggregating.
+- **Latency spikes**: Reranking adds latency. If your vector search takes 20ms, a 100ms reranker makes the total 120ms. Ensure your SLO allows it.
 
 ## Open Questions
 
-I haven't yet explored using a small LLM (e.g., Llama 3.2 3B) as a reranker via prompting. The idea is to ask the LLM to rate relevance on a scale of 1-5. The latency might be high, but the contextual understanding could be superior. Has anyone tried this?
+I haven't yet tried using a reranker as a reward model for RLHF, but it's an interesting idea. Also, can we distill a large reranker into a smaller one? I'd love to hear others' experiences.
 
-Another open question: Can we train a single reranker that works across multiple domains without fine-tuning? I suspect not, but a mixture-of-experts approach might help.
-
-## Bottom Line
-
-Don't underestimate the reranker. It's often the highest-impact component you can tune. Start with a fast cross-encoder, measure your recall@k before and after reranking, and iterate. The vector DB is important, but the reranker is where the magic happens.
+In summary, don't underestimate the reranker. It's often the cheapest win for retrieval quality. Start with a small model, evaluate, and scale up if needed.
