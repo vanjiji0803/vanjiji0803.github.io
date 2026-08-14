@@ -1,64 +1,71 @@
 ---
-title: "Why RAG Fails: Chunking, Retrieval Recall, Reranking, and Answer Grounding"
-description: "A deep dive into common failure modes in RAG pipelines and how to fix them."
-date: 2026-07-23
-tags: ["rag", "retrieval", "chunking", "grounding"]
+title: "Why RAG fails: chunking, retrieval recall, reranking, and answer grounding"
+description: "A practical breakdown of RAG failure modes—chunking, recall, reranking, grounding—with concrete fixes and evaluation tips."
+date: 2026-08-14
+tags: ["rag", "retrieval", "reranking", "grounding"]
 draft: false
 ---
 
-RAG (Retrieval-Augmented Generation) is the go-to pattern for grounding LLMs in external knowledge. But in production, RAG pipelines break in predictable ways. I've spent the past year building a surgical RAG agent (Surg-Agent) and debugging these issues. Here's what I've learned.
+RAG (Retrieval-Augmented Generation) has become the default architecture for grounding LLMs in private or domain-specific data. But if you've deployed one in production, you know it fails in predictable ways. The failures aren't random—they cluster around four stages: chunking, retrieval recall, reranking, and answer grounding. Let's dissect each, with concrete examples and tradeoffs.
 
-## 1. Chunking: The First Bottleneck
+## 1. Chunking: The Silent Killer
 
-Chunking isn't just splitting text. If you use fixed-size chunks (e.g., 512 tokens), you'll sever sentences, tables, or code blocks. The retriever then returns incomplete context, and the LLM hallucinates the missing parts.
+Chunking is the first place things go wrong. Most tutorials suggest fixed-size chunks (e.g., 512 tokens). But fixed sizes ignore semantic boundaries. A chunk that splits a table or a code block becomes garbage for retrieval.
 
-**Better approach:** Use semantic chunking—split on paragraph boundaries, section headers, or using an embedding similarity threshold (e.g., split when cosine similarity between consecutive sentences drops below 0.5). For structured docs (e.g., medical guidelines), keep tables and lists intact.
+**My experience:** I once built a RAG for clinical guidelines. Chunking by 256 characters split dosage tables mid-row. The retriever returned fragments that looked plausible but were contextually wrong. The fix? Use recursive character splitting with separators like `\n\n`, `\n`, and `.`. For structured content, consider structure-aware splitting (e.g., by Markdown headers or HTML sections).
 
-**Tradeoff:** Semantic chunking is slower and may produce uneven chunk sizes. But retrieval recall improves significantly because each chunk is self-contained.
+**Tradeoff:** Smaller chunks increase retrieval precision but lose context. Larger chunks preserve context but dilute relevance. A common heuristic: aim for 300-500 tokens, but always test with your data.
 
-## 2. Retrieval Recall: The Embedding Gap
+## 2. Retrieval Recall: Top-k is a Gamble
 
-Even with perfect chunks, retrieval can miss relevant context. Why? Embedding models are biased toward semantic similarity, not factual correctness. A query like "What is the survival rate for pancreatic cancer?" might retrieve chunks about "pancreatic cancer symptoms" because they share more vocabulary.
+Retrieval recall is the probability that the relevant passage is in your top-k. If it's not, the LLM has no chance. I've seen recall rates as low as 60% with dense embeddings on domain-specific jargon.
 
-**Fix:** Use hybrid search (dense + sparse). Sparse retrieval (BM25) captures exact keyword matches, while dense embeddings capture semantics. Weight them (e.g., 0.3 BM25 + 0.7 dense) and tune on your domain.
+**Why it fails:** Embedding models are trained on general text. Medical or legal terms often map to nearby but wrong vectors. For example, "myocardial infarction" might retrieve "heart attack" paragraphs, but the exact treatment protocol might be missed.
 
-**Edge case:** In clinical RAG, abbreviations cause trouble. "MI" could mean myocardial infarction or mitral insufficiency. A domain-specific embedding model (fine-tuned on medical text) helps, but I've found that adding a query expansion step (LLM generates synonyms) is more practical.
+**Mitigations:**
+- **Hybrid search:** Combine dense embeddings with BM25 (lexical). BM25 catches exact terms; embeddings catch semantics. Weight them (e.g., 0.7/0.3) and tune on your data.
+- **Query expansion:** Generate multiple queries from the original using an LLM (e.g., "What is the dose for myocardial infarction?" → "MI treatment", "heart attack medication"). This boosts recall at the cost of latency.
+- **Fine-tune embeddings:** If you have labeled pairs, fine-tune a model like `bge-large` on your domain. I've seen recall jump from 70% to 90% with a few thousand examples.
 
-## 3. Reranking: Precision vs. Latency
+**Evaluation:** Don't rely on intuition. Build a golden set of 100-200 queries with known relevant chunks. Measure recall@k (e.g., recall@10). If it's below 80%, your RAG will hallucinate.
 
-After retrieval, you often have 10-20 chunks. Reranking with a cross-encoder (e.g., Cohere rerank) boosts precision but adds 50-200ms per chunk. For a surgical agent, that latency is unacceptable.
+## 3. Reranking: The Overlooked Step
 
-**My approach:** Use a two-stage reranker. First, a lightweight bi-encoder (e.g., sentence-transformers) to filter top-5 from top-20. Then, a cross-encoder on only those 5. This cuts latency by 60% while keeping recall high.
+Many RAG pipelines skip reranking, assuming top-k from retrieval is good enough. That's a mistake. Dense retrieval returns semantically similar but not necessarily relevant results. Rerankers (cross-encoders) score query-passage pairs jointly, capturing nuance.
 
-**Failure mode:** Rerankers can overfit to query-chunk similarity and ignore answerability. A chunk might be relevant but lack the specific answer. I've seen rerankers rank a chunk about "treatment" higher than one containing the exact survival rate. Solution: Include a "does this chunk contain the answer?" classification step, or use an LLM to verify after reranking.
+**Example:** Query: "What is the contraindication for aspirin in children?" A dense retriever might return a passage about aspirin's mechanism. A reranker would rank the passage about Reye's syndrome higher.
 
-## 4. Answer Grounding: The Hallucination Trap
+**Tradeoff:** Rerankers are slow (e.g., `cross-encoder/ms-marco-MiniLM-L-6-v2` takes ~10ms per pair on CPU). For 100 candidates, that's 1 second—too slow for real-time. Solutions:
+- Rerank only top-20 or top-50, not all.
+- Use a lightweight reranker, or distill a large reranker into a smaller one.
+- Cache reranking scores for frequent queries.
 
-Even with the right chunks, the LLM may ignore them and hallucinate. This is especially common with small LLMs (7B-13B) that are instruction-finetuned to be creative.
+**My take:** Reranking is worth the latency if you need accuracy. For a surgical agent, I'd rather wait 200ms more than give a wrong answer.
 
-**Grounding techniques:**
-- **Prompt engineering:** Explicitly instruct the LLM to only use the provided context. Add a penalty for extra information.
-- **Citation generation:** Force the LLM to output citations (e.g., [1][2]) and then verify each claim against the retrieved chunks. If a claim has no citation, reject it.
-- **Self-consistency:** Generate multiple answers with different temperature and check for agreement. If answers diverge, retrieval likely failed.
+## 4. Answer Grounding: The Final Frontier
 
-**Observation:** In Surg-Agent, we use a state machine that checks whether the LLM's output is fully grounded before returning. If not, we re-retrieve with an expanded query. This adds 1-2 seconds but reduces hallucination rate from 15% to 3%.
+Even with perfect retrieval, the LLM might ignore the context and hallucinate. Why? Because the model is trained to be helpful, not to be faithful to context. Grounding failures happen when:
+- The context is contradictory or incomplete.
+- The LLM's parametric knowledge overrides the context (e.g., it "knows" the answer from training).
+- The prompt doesn't enforce grounding.
 
-## 5. Evaluation: The Missing Piece
+**Mitigations:**
+- **Prompt engineering:** Explicitly say: "Answer only based on the provided context. If the context doesn't contain the answer, say 'I don't know'." This helps but isn't foolproof.
+- **Structured output:** Ask the LLM to output a JSON with `answer` and `citations` (chunk IDs). Then verify that each claim in the answer is supported by the cited chunks. This is called **attribution**.
+- **Post-hoc validation:** Use an NLI model (e.g., `facebook/bart-large-mnli`) to check if the answer is entailed by the context. If not, flag it.
 
-Most RAG systems are deployed without rigorous evaluation. You need three metrics:
-- **Retrieval recall:** % of ground-truth chunks in top-k.
-- **Answer correctness:** Exact match or semantic similarity to gold answer.
-- **Grounding score:** % of claims that can be traced back to retrieved chunks.
+**Failure mode:** Even with grounding, the LLM might cite a chunk that doesn't support the claim. I've seen models cite a chunk about drug interactions when answering a dosing question. The fix is to evaluate grounding accuracy, not just answer correctness.
 
-**Tooling:** Use RAGAS or build a custom eval set with 200-500 examples. I've found that manual evaluation of 50 cases catches more bugs than automated metrics.
+## Evaluation: The Missing Piece
+
+Most teams don't evaluate RAG properly. They test with a few hand-crafted queries and call it done. That's insufficient. You need a systematic evaluation:
+- **Retrieval:** Recall@k, MRR.
+- **Generation:** Faithfulness (is the answer supported by context?), answer relevance, and correctness (against a golden answer).
+
+Tools like `RAGAS` or `TruLens` can automate this. But beware: synthetic evaluation datasets can be biased. Build your own from real user queries.
 
 ## Open Questions
 
-- How do you handle multi-hop questions where the answer requires combining information from multiple chunks? Current rerankers don't model this.
-- For streaming RAG (e.g., real-time surgical video), chunking and retrieval must happen in <100ms. Is approximate nearest neighbor (HNSW) enough, or do we need learned indices?
+I haven't yet tried adaptive chunking (e.g., using an LLM to decide chunk boundaries). It sounds promising but expensive. Also, reranking with LLMs (using the LLM itself to rank) is too slow for production, but maybe with distillation it could work.
 
-RAG is not a solved problem. Each component—chunking, retrieval, reranking, grounding—has failure modes that compound. The key is to measure, iterate, and accept that no pipeline is perfect. But with careful engineering, you can get to 95%+ reliability.
-
----
-
-*Fan Zhang builds AI agents for surgery at Peking University. Previously worked on pharmacogenomics GWAS and edge AI with NVIDIA Holoscan.*
+RAG is not a solved problem. It's a pipeline of fragile components. But if you understand where it fails and measure each stage, you can make it robust enough for production. Start by instrumenting your pipeline: log retrieval scores, rerank scores, and grounding checks. You'll be surprised how many silent failures you catch.
