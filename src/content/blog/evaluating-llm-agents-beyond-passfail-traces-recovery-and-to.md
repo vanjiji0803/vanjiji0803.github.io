@@ -1,54 +1,74 @@
 ---
 title: "Evaluating LLM agents beyond pass/fail: traces, recovery, and tool-use quality"
-description: "A practical guide to evaluating agent behavior using traces, recovery patterns, and tool-use quality metrics."
-date: 2026-07-29
+description: "How to evaluate LLM agents with trace analysis, recovery metrics, and tool-use quality, not just pass/fail."
+date: 2026-08-18
 tags: ["llm-agents", "evaluation", "tool-use", "observability"]
 draft: false
 ---
 
-When we evaluate LLM agents, most teams default to a simple pass/fail on the final output. But in production, an agent that fails gracefully can be more valuable than one that succeeds by luck. I've been thinking about three axes that go beyond binary success: trace quality, recovery behavior, and tool-use quality.
+When I started building Surg-Agent, a RAG-based surgical assistant, I fell into the classic trap: measuring success by "did it answer correctly?" Pass/fail. But agents are not classifiers. They take actions, call tools, recover from errors, and leave traces. A binary score hides everything that matters.
 
-## Trace Quality
+In this post, I'll share how I evaluate agents beyond pass/fail, focusing on three dimensions: trace analysis, recovery quality, and tool-use quality. These are practical, implementable, and have caught bugs that accuracy metrics missed.
 
-A trace is the complete record of an agent's reasoning steps, tool calls, and intermediate outputs. Instead of just checking the final answer, we can evaluate the trace itself. For example, does the agent decompose a complex query into sensible sub-tasks? Are the tool calls logically ordered? One metric is "step relevance": for each tool call, we can compute the cosine similarity between the tool's input and the current context. A low similarity might indicate hallucination or off-track reasoning.
+## Why pass/fail is not enough
 
-Another metric is "information flow": does the agent reuse outputs from earlier steps? You can measure the overlap between the output of step N and the input of step N+1. If there's no overlap, the agent might be ignoring its own previous work.
+Consider an agent that needs to retrieve patient history, check drug interactions, and then answer. A pass/fail test might say "correct answer" even if the agent:
 
-## Recovery Behavior
+- Called the retrieval tool 20 times in a loop, wasting tokens and latency.
+- Retrieved irrelevant chunks but still stumbled on the right answer.
+- Failed to call a necessary tool and hallucinated the interaction.
 
-Agents will make mistakes. The question is how they recover. I categorize recovery into three levels:
+All these are failures in agent behavior, but pass/fail sees only the final answer. In production, these inefficiencies compound: higher cost, slower response, and unpredictable behavior.
 
-1. **No recovery**: The agent fails and stops, or produces a wrong answer.
-2. **Retry with same approach**: The agent re-calls the same tool with slightly different parameters (e.g., changing a search query). This is basic.
-3. **Strategy shift**: The agent recognizes the failure (e.g., tool returns empty) and switches to a different tool or approach. This is much harder.
+## Trace analysis: the agent's decision path
 
-To evaluate recovery, you can inject controlled errors into the environment. For example, make a search tool return no results for a known query, or make an API return an error code. Then measure: does the agent detect the error? Does it try an alternative? How many steps does it waste?
+Every agent run produces a trace: the sequence of tool calls, arguments, outputs, and internal reasoning. I treat traces as first-class data. For each run, I record:
 
-## Tool-Use Quality
+- Tool call order and timestamps.
+- Input/output token counts per step.
+- Whether each tool call succeeded or failed.
+- The agent's final answer and confidence.
 
-Tool-use quality is about efficiency and correctness. I track:
+With traces, I can compute metrics like:
 
-- **Tool selection accuracy**: Did the agent call the right tool for the task? For a math problem, calling a calculator is correct; calling a web search is wasteful.
-- **Parameter quality**: Are the tool inputs well-formed? For a SQL tool, are the queries syntactically correct? For a search tool, are the keywords specific enough?
-- **Redundancy**: How many tool calls are redundant? If the agent calls the same tool with the same parameters twice, that's a failure.
-- **Latency impact**: Each tool call adds latency. We can compute a "cost per successful step" by dividing total latency by the number of useful steps.
+- **Tool call efficiency**: average number of calls per task. A well-designed agent should call only necessary tools. If I see >5 calls for a simple lookup, something is off.
+- **Redundant calls**: repeated identical calls with same arguments. Often due to poor state management.
+- **Latency breakdown**: time spent in reasoning vs. tool execution. If reasoning dominates, the prompt might be too vague.
 
-## Putting It Together
+For example, in Surg-Agent, I noticed the agent sometimes called the vector search twice with the same query. The trace showed it was because the agent didn't remember the previous result. I fixed this by adding a short-term memory buffer, cutting calls by 30%.
 
-I've been experimenting with a simple evaluation framework that combines these metrics. For each agent run, we collect a trace, then compute a composite score:
+## Recovery: how agents handle errors
 
-```
-composite_score = (trace_quality * w1) + (recovery_score * w2) + (tool_quality * w3)
-```
+Agents will fail. Tools time out, APIs return errors, or the agent misformats a function call. The key is recovery. I evaluate recovery with two metrics:
 
-Where weights are tuned per domain. For a customer support agent, recovery might be weighted higher. For a data analysis agent, tool quality matters more.
+- **Error rate**: percentage of tool calls that fail.
+- **Recovery rate**: percentage of failed calls that the agent successfully retries or works around, leading to a valid final answer.
 
-One open question: how to automate recovery scoring? Currently I use a mix of rule-based checks (e.g., did the agent call a different tool after an error?) and LLM-as-judge to evaluate the strategy shift. The LLM judge is expensive but gives more nuanced feedback.
+But recovery isn't binary. I also look at the recovery path:
 
-Another challenge: traces can be very long. For a 10-step agent, the trace might be 10k tokens. Summarizing the trace for evaluation is itself a research problem. I've tried using a smaller model (e.g., Llama 3.2 3B) to produce a structured summary of the trace, then evaluate that summary.
+- Does the agent retry with the same arguments (bad) or modify them (good)?
+- Does it fall back to a different tool or ask for clarification?
+- How many extra steps does recovery take?
 
-## Final Thoughts
+For instance, my agent sometimes calls a drug interaction API that returns 404 for unknown drugs. A good recovery would be to check the drug name against a local list. A bad recovery would retry the same call three times. I now include a "recovery quality" score: 0 for no recovery, 1 for retry with modification, 2 for fallback tool, 3 for graceful degradation (e.g., "I couldn't find interaction data, but here's general advice").
 
-Pass/fail evaluation hides the agent's behavior. By looking at traces, recovery patterns, and tool-use quality, we can identify specific failure modes: is the agent bad at detecting errors? Does it overuse a particular tool? Does it forget context? These insights drive targeted improvements.
+## Tool-use quality: not just if, but how
 
-I haven't yet explored multi-agent scenarios where traces become even more complex. That's next on my list.
+Tool-use quality is about whether the agent uses tools appropriately. I evaluate:
+
+- **Relevance**: Are the tools called relevant to the task? An agent that calls a patient lookup tool when asked about drug dosage is a failure.
+- **Argument correctness**: Are the arguments well-formed and semantically correct? For example, passing a patient ID instead of a drug ID.
+- **Timing**: Does the agent call tools at the right time? For multi-step tasks, calling a tool too early or too late can degrade performance.
+- **Information extraction**: Does the agent extract the right pieces from tool outputs? I've seen agents ignore a crucial field in a JSON response.
+
+I use a rubric-based evaluation, where human annotators score each tool call on these dimensions. It's expensive, but I sample a subset of runs for deep analysis. For automated checks, I write unit tests with mocked tool outputs to verify the agent's decision logic.
+
+## Putting it together: an evaluation harness
+
+I built a small evaluation harness that runs a suite of test cases, records traces, and computes the metrics above. It outputs a JSON report per run, and I aggregate across runs. I also log traces to a database for post-hoc analysis. This has been invaluable for debugging: when a user reports a weird behavior, I can replay the trace and see exactly where it went wrong.
+
+One open question I have: how to automatically detect "recovery quality" without manual annotation? I'm experimenting with using the final answer's correctness and the number of steps as a proxy, but it's noisy. If you have ideas, I'd love to hear.
+
+## Conclusion
+
+Evaluating agents is not about a single number. By analyzing traces, measuring recovery, and scoring tool-use quality, I've found issues that pass/fail would have missed. It's more work, but for production agents, it's worth it. Start by logging traces, then compute simple metrics, and iterate. Your agent will thank you.
