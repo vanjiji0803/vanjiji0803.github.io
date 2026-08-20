@@ -1,63 +1,39 @@
 ---
-title: "Hallucination control in production LLM systems: constraints, retrieval, verification, and refusal"
-description: "A practical guide to reducing LLM hallucinations using constraints, retrieval, verification, and refusal strategies."
-date: 2026-07-31
+title: "Hallucination Control in Production LLM Systems: Constraints, Retrieval, Verification, and Refusal"
+description: "Practical techniques to reduce LLM hallucinations in production: constraints, retrieval, verification, and refusal, with tradeoffs and implementation notes."
+date: 2026-08-20
 tags: ["llm", "hallucination", "rag", "production"]
 draft: false
 ---
 
-In production LLM systems, hallucinations are not just a nuisance; they can be dangerous. I've spent the last year building surgical agents and RAG pipelines, and I've learned that controlling hallucinations requires a multi-layered approach. Here's what works for me, and what doesn't.
+Hallucination control is a top concern when deploying LLMs in production. Over the past year, I've worked on RAG-based surgical agents and other systems where a wrong answer can be costly. Here's a practical rundown of four complementary layers: constraints, retrieval, verification, and refusal. Each has its own tradeoffs and failure modes.
 
-## 1. Constrain the output space
+## Constraints: bounding the output space
 
-The first line of defense is to limit what the model can say. If you're building a system that extracts structured data, use JSON mode or function calling. For example, in our surgical agent, we use a state machine with predefined transitions. The model can only choose from a set of actions (e.g., 'ask_question', 'retrieve_info', 'proceed'), and each action has a schema. This reduces the chance of the model inventing a new procedure.
+The simplest way to prevent hallucination is to restrict what the model can say. For structured outputs, use constrained decoding: JSON schema, regex, or grammar. For classification, use logit bias to force a valid label. For example, in a surgical agent that needs to output a step from a fixed checklist, we can mask logits to only those tokens. This eliminates out-of-vocabulary hallucinations entirely.
 
-But constraints aren't bulletproof. The model can still fill in wrong values within a schema. That's where retrieval and verification come in.
+But constraints have limits. They don't help with free-text generation where the answer is open-ended. Also, they can degrade quality if the schema is too rigid, forcing the model to produce awkward phrasing. I've seen systems where constrained decoding caused the model to 'cheat' by putting extra info in a comment field. So, design your schema carefully.
 
-## 2. Ground with retrieval (RAG)
+## Retrieval: grounding in external knowledge
 
-RAG is the most common way to ground the model. But naive RAG fails. In my experience, chunking is critical. For medical documents, I use a hierarchical chunking strategy: first split by headings, then by paragraphs, and keep chunks around 500 tokens with overlap. This preserves context while allowing retrieval.
+RAG is the standard approach for grounding. The key is chunking and retrieval quality. I've found that chunk size matters: too small (e.g., 100 tokens) loses context, too large (e.g., 2000) dilutes relevance. A sweet spot is 300-500 tokens, with overlap. For retrieval, hybrid search (BM25 + dense) often beats pure vector search, especially for domain-specific terms. Reranking is essential: a cross-encoder can boost precision significantly. In our surgical agent, we used a two-stage retriever: first retrieve top 20, then rerank to top 5.
 
-Retrieval quality matters more than the model's size. I've seen a 7B model with good retrieval outperform a 70B model with bad retrieval. Use hybrid search (BM25 + dense) and a reranker. But beware: rerankers can be overconfident. I've had cases where the reranker's top result was wrong, and the model confidently cited it.
+But retrieval introduces its own failure modes: if the corpus is incomplete or outdated, the model will confidently cite irrelevant passages. Also, retrieval latency adds up. In edge deployment, we had to optimize embedding inference to keep end-to-end under 200ms.
 
-## 3. Verify before you trust
+## Verification: checking the output
 
-Retrieval gives you evidence, but you need to verify that the model's claims are actually supported. I've implemented a simple verification step: after the model generates an answer, I extract the key claims and check them against the retrieved passages using a textual entailment model. If the entailment score is low, I flag the answer as 'unsupported'.
+Verification is about checking the model's output against external facts. For factual claims, you can use a separate model to extract claims and then verify each against retrieved evidence. For example, in a medical Q&A, we extract entities and check them against a knowledge base. This is compute-intensive but catches many hallucinations.
 
-This adds latency, so I only verify high-stakes claims. For example, in a medical agent, drug interactions are verified; general questions are not.
+Another approach is self-consistency: generate multiple samples (e.g., 5) and check agreement. If they diverge, it's a sign of uncertainty. I've used this for open-ended questions where retrieval is weak. But it multiplies cost and latency.
 
-## 4. Teach the model to refuse
+## Refusal: knowing when to say 'I don't know'
 
-Sometimes the best answer is 'I don't know'. I fine-tune my models to refuse when the evidence is insufficient. This is tricky because you need to balance refusal with helpfulness. I use a threshold: if the retrieval confidence is below a certain value, the model is instructed to say 'I'm not sure' and suggest alternatives.
+Sometimes the best answer is to refuse. This requires the model to estimate its own uncertainty. You can prompt it to say 'I don't know' when evidence is insufficient, but that's unreliable. Better: use a threshold on retrieval scores. If the top retrieved passage has a similarity score below a threshold, refuse. In our system, we set a threshold based on a calibration set. This reduced hallucination rate significantly, but it also increased the refusal rate on borderline cases. You need to tune the threshold to balance precision and recall.
 
-But refusal can be gamed. The model might refuse too often, making the system useless. I've found that calibrating the threshold on a validation set helps. Also, you can add a 'confidence' field to the output, letting the downstream system decide.
+## Putting it together
 
-## 5. Observability and evaluation
+In production, you need a pipeline: first, try constraints; if the output is structured, that's enough. For free-text, use retrieval with reranking, and set a refusal threshold. For high-stakes domains, add verification. Each layer adds latency and cost, so it's a tradeoff.
 
-You can't fix what you can't measure. I log every generation with the retrieved chunks, the final answer, and a human rating. For evaluation, I use a combination of automatic metrics (faithfulness, answer relevance) and human review. I've built a small dashboard that shows hallucination rates per query type.
+One open question: how to evaluate hallucination control? We used a human-annotated set of 200 questions, measuring factual accuracy and refusal precision. But it's not scalable. I'm exploring automated metrics like FactScore, but they have their own biases.
 
-One open question: how do you evaluate hallucinations in free-form dialogue? I haven't found a perfect solution yet. For now, I rely on human evaluation for those cases.
-
-## 6. Failure modes and edge cases
-
-Even with all this, hallucinations slip through. Common failure modes:
-
-- **Retrieval misses the relevant chunk**: The model then has no evidence, but it still answers. I mitigate this by adding a 'no evidence' condition that triggers refusal.
-- **Conflicting evidence**: Two chunks say different things. The model picks one, but it might be the wrong one. I'm experimenting with showing both and asking the model to present the conflict.
-- **Over-verification**: The entailment model rejects valid answers. This is a precision-recall tradeoff. I tune the threshold to minimize high-risk errors.
-
-## 7. Practical tips
-
-- **Token budget**: Always reserve tokens for the verification step. If you're using a 4K context, use 3K for input and 1K for output, leaving room for verification prompts.
-- **Model selection**: For high-stakes tasks, use a larger model (e.g., GPT-4 or Claude) even if it's slower. For low-stakes, a smaller model with good retrieval is fine.
-- **Latency**: Verification adds 200-500ms. If that's too slow, consider a cascaded approach: fast model first, and only if confidence is low, do a slower verification.
-
-## 8. Open questions
-
-I'm still exploring how to handle hallucinations in multi-turn conversations. The context grows, and the model might carry over a hallucination from a previous turn. I'm thinking of a 'memory check' that verifies facts across turns.
-
-Another question: can we use reinforcement learning to reduce hallucinations? I've seen some papers, but I haven't tried it yet. It seems promising but complex.
-
-In summary, hallucination control is not a single trick but a system design. Constraints, retrieval, verification, and refusal work together. Start with constraints and retrieval, add verification for high-stakes, and always have a refusal fallback. And measure everything.
-
-If you have experience with these methods, I'd love to hear what works for you. I'm especially interested in how you handle the tradeoff between helpfulness and refusal.
+Overall, there's no silver bullet. You need a combination, and you need to tune it for your domain. If you have experience with verification in production, I'd love to hear about it.
