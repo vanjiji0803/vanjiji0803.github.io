@@ -1,75 +1,41 @@
 ---
 title: "Prompt Templates as Software Interfaces: Versioning, Regression Tests, and Observability"
-description: "Treat prompt templates like API interfaces with versioning, regression tests, and observability to tame LLM drift."
-date: 2026-07-13
+description: "Treat prompt templates like code: version, test, and monitor them to prevent silent regressions and improve reliability."
+date: 2026-08-24
 tags: ["prompt-engineering", "llm-ops", "testing", "observability"]
 draft: false
 ---
 
-When I started building LLM applications, I treated prompt templates like magic strings — tweak until it works, then pray nothing breaks. After watching a few production incidents where a subtle prompt change silently degraded retrieval quality or caused the model to ignore instructions, I realized prompt templates are software interfaces. They have contracts, versioning, regression tests, and observability requirements — just like REST APIs.
+When I started building LLM-based features, I treated prompt templates as strings to be tweaked in a notebook. It worked until it didn't: a small change to a system prompt caused a 15% drop in the accuracy of a medical entity extraction pipeline, and we didn't notice for two weeks because we had no tests or monitoring. That experience pushed me to treat prompt templates as software interfaces—versioned, tested, and observed. Here's how I do it now.
 
-## Versioning: Semantic Versioning for Prompts
+## Versioning: Treat prompts like code
 
-Prompt templates evolve. A small wording change can shift the model's behavior. I now version prompts with a simple `major.minor.patch` scheme:
+Prompt templates are code. They live in a repository, go through code review, and are versioned with semantic tags (e.g., `v1.2.0`). I store them as separate files (e.g., `prompts/entity_extraction/system.md`) and reference them by version in the application config. This allows rollbacks and A/B testing. For example, in our surgical agent, the system prompt for the tool-use state machine changed from `v1.1.0` to `v1.2.0` to add a constraint about not calling `get_patient_history` more than twice per turn. We could compare metrics between versions.
 
-- **Major**: changes that alter the expected output structure (e.g., switching from JSON to Markdown, adding new required fields).
-- **Minor**: changes that add optional instructions or rephrase without breaking the interface.
-- **Patch**: fixes for typos, formatting, or clarifications that shouldn't change behavior.
+## Regression tests: Catch silent failures
 
-Store the version in the prompt metadata (e.g., `# version: 2.1.0`). When you log inference calls, include the prompt version. This lets you correlate output changes with prompt updates.
+LLM outputs are non-deterministic, but you can still write deterministic tests. I maintain a golden set of inputs and expected behaviors. For each prompt version, I run a set of test cases and assert on structural properties: does the output contain a valid JSON? Does it include a required field? Does it avoid forbidden phrases? For example, a test for the surgical agent's planning loop checks that the model never outputs a tool call with missing arguments. I use `pytest` and `pytest-asyncio` to run these against a mock LLM (or a real one with a fixed temperature=0, but that's not fully deterministic).
 
-## Regression Tests: Automated Prompt Checks
+I also use differential testing: run the same input through two prompt versions and compare outputs. If the outputs differ in a way that violates a semantic invariant (e.g., the extracted entity type is different), the test fails. This catches regressions that a single-version test might miss.
 
-You can't unit test an LLM's output deterministically, but you can test for properties. I maintain a small suite of regression tests that run on every prompt change:
+## Observability: Log everything, but be smart
 
-- **Structure checks**: Does the output parse as valid JSON? Does it contain required keys?
-- **Content checks**: Does the output contain specific forbidden phrases? (e.g., "I cannot answer that" in a RAG system)
-- **Semantic checks**: Use a smaller model or an embedding similarity threshold to verify the output stays close to a golden answer.
-- **Edge case inputs**: Empty context, very long context, adversarial instructions (prompt injection attempts).
+Observability is crucial. I log every prompt and response with a unique `prompt_version` and `request_id`. I store these in a structured log (e.g., JSON lines) and send them to a dashboard. Key metrics: latency, token usage, and a set of custom quality scores. For example, for a RAG-based Q&A, I compute a self-consistency score by sampling the model multiple times and measuring agreement. If the score drops below a threshold, I get an alert.
 
-Each test has a pass/fail criterion and a confidence threshold. I run these in CI before deploying any prompt change.
+One practical tip: include a `prompt_hash` in the log to quickly identify which exact template was used, even if the version tag is missing. I compute a hash of the rendered prompt (including few-shot examples) and log it. This saved us when a colleague accidentally edited a prompt file without bumping the version.
 
-## Observability: Logging Prompt Versions and Output Drift
+## Failure modes and edge cases
 
-Observability is where most teams fall short. You need to log:
+Prompt versioning has pitfalls. First, versioning the template alone is not enough; you must version the tokenizer and the model. A change from GPT-4 to GPT-4-turbo can alter behavior even with the same prompt. I pin the model version in the config and include it in the version hash.
 
-- **Prompt template version** (as above)
-- **Rendered prompt** (with variables filled in)
-- **Model response**
-- **Latency and token usage**
-- **Retrieval context** (chunks used, their relevance scores)
+Second, regression tests can give false confidence. A test that passes on a golden set may fail in production due to distribution shift. I periodically re-evaluate the golden set and update it with real-world examples from logs.
 
-With this data, you can detect drift: if the average response length suddenly increases after a prompt update, or if the model starts ignoring a key instruction. I use a simple dashboard that compares the last 7 days of outputs against the previous 7 days, flagging significant changes in:
+Third, observability adds latency and cost. Logging every prompt can be expensive. I sample at 10% for high-volume endpoints, but log 100% for errors and edge cases.
 
-- Output format compliance (e.g., JSON parse failure rate)
-- Keyword presence (e.g., "I'm sorry" rate)
-- Response length distribution
+## Open questions
 
-## Practical Example: A RAG Agent Prompt
+I haven't yet automated the detection of prompt regressions using embedding similarity of outputs. It's on my list: compute the cosine distance between the average output embedding of the current prompt and a baseline, and alert if it drifts. This could catch semantic shifts that structural tests miss.
 
-Here's a simplified prompt template for a RAG agent:
+Another open question: how to handle prompt inheritance. When I have a base prompt and a specialization, I want to version them together. I'm experimenting with a template that includes `{{base_prompt}}` and versioning the combination.
 
-```
-You are a surgical assistant. Answer based only on the provided context.
-
-Context:
-{context}
-
-Question: {question}
-
-Answer in JSON with keys: "answer" (string), "confidence" (0-1), "citations" (list of strings).
-
-# version: 1.2.0
-```
-
-If I change the JSON schema (e.g., add a `reasoning` key), that's a major version bump. My regression tests would catch if old code tries to parse the new format. My observability dashboard would show the parse failure rate spiking until downstream code is updated.
-
-## Tradeoffs and Open Questions
-
-- **Test coverage**: How many regression tests are enough? I aim for 10-20 covering common failure modes, but it's never exhaustive.
-- **Golden answers**: They become stale as the model updates. I regenerate them monthly.
-- **Prompt versioning vs. model versioning**: Both matter. A prompt that works on GPT-4 may fail on GPT-4o. I tag each prompt version with the compatible model(s).
-
-I haven't tried automated prompt optimization yet — that's a whole other can of worms. But for now, treating prompts as interfaces has saved me from several embarrassing production bugs.
-
-What's your approach to prompt management? I'd love to hear how others handle versioning and testing at scale.
+Treating prompts as software interfaces is not just about discipline; it's about enabling rapid iteration with confidence. When you can roll back a prompt in seconds and know that your tests will catch regressions, you can experiment more freely. That's the real win.
