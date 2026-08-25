@@ -1,43 +1,97 @@
 ---
 title: "Agent Memory Design: Episodic Logs, Semantic Memory, Working Memory, and Forgetting"
-description: "Exploring memory structures for LLM agents: episodic logs, semantic memory, working memory, and forgetting mechanisms."
-date: 2026-07-14
-tags: ["agent", "memory", "llm", "design"]
+description: "A practical guide to designing agent memory systems, covering episodic logs, semantic memory, working memory, and forgetting strategies."
+date: 2026-08-25
+tags: ["agents", "memory", "LLM", "design"]
 draft: false
 ---
 
-When building LLM-based agents, one of the trickiest parts is memory. Without it, agents are amnesiacs — they can't recall past interactions, learn from mistakes, or maintain context. But memory isn't just a big log. In cognitive science, memory is split into sensory, working, short-term, and long-term. For agents, I find a three-part model useful: **episodic logs**, **semantic memory**, and **working memory**. And crucially, you need **forgetting**.
+When I first started building agents, I treated memory as a simple `history` list. It worked for demos, but fell apart in production: context windows overflowed, the agent repeated itself, and it couldn't recall what it did yesterday. This post is about the memory architecture I've converged on after several iterations, and the tradeoffs I've hit along the way.
 
-## Episodic Logs
-Episodic memory stores specific experiences: "At 10:32, user asked about X, I retrieved Y and responded Z." In agents, this is often a raw log of events — each turn, each tool call, each retrieval. I store these as structured JSON in a database (PostgreSQL or MongoDB), with timestamps and metadata. The key tradeoff: granularity vs. storage. Storing every token is wasteful; storing only summaries loses detail. I usually store the full user message, agent response, and a short summary of internal steps (e.g., "retrieved 3 chunks from doc A, scores >0.8").
+## The Three Memory Types
 
-Episodic logs are used for **reflection** and **debugging**. When an agent hallucinates, I trace back through logs to see what context it had. They also feed into semantic memory via summarization.
+I divide agent memory into three types, borrowing from cognitive science but adapting for engineering:
 
-## Semantic Memory
-Semantic memory is general knowledge extracted from experience. For agents, this means facts, patterns, and rules learned over time. I implement this as a vector store (FAISS or pgvector) where I store embeddings of important facts. For example, after an agent successfully resolves a user's billing issue, it might store: "User X has subscription plan Y, discount code Z applied." This is not a raw log — it's a distilled fact.
+- **Working memory**: the current context window, what the agent is actively processing.
+- **Episodic memory**: a log of past interactions, events, and outcomes.
+- **Semantic memory**: distilled knowledge extracted from episodes, stored in a retrievable form (usually embeddings).
 
-The challenge is deciding what to store. I use a two-step process: after each episode, an LLM extracts "facts" (e.g., user preferences, system states) and stores them with a timestamp and confidence score. Then, during retrieval, I query these facts with a recency-weighted similarity. This avoids cluttering memory with trivial details.
+Each serves a different purpose and has different cost characteristics.
 
-## Working Memory
-Working memory is the agent's scratchpad for the current task. It's limited and volatile. In practice, I use the LLM's context window as working memory, but that's finite (e.g., 128k tokens). I structure it as a JSON object containing: current goal, recent actions, intermediate results, and a pointer to relevant episodic/semantic memories. I update this after each step.
+## Working Memory: The Context Window
 
-The key design decision: what to keep in working memory vs. offload to long-term? I keep the last N turns (N=10-20) and any retrieved memory chunks that are directly relevant. Everything else is summarized or dropped. This is where **forgetting** comes in.
+Working memory is the most expensive resource. With a 128k token context, you might think you can fit a lot, but in practice, you need to reserve space for:
 
-## Forgetting
-Forgetting is not a bug; it's a feature. Without it, memory grows unbounded, retrieval becomes slow, and irrelevant information pollutes the context. I implement forgetting at multiple levels:
+- System prompt and tool definitions: ~2k tokens
+- Current user query: ~1k
+- Intermediate reasoning and tool calls: ~5-10k
+- Retrieved memories: ~2-5k
 
-- **Episodic logs**: I keep them for a fixed period (e.g., 30 days) or up to a size limit (e.g., 10k entries). Older logs are archived or deleted. For critical tasks, I keep a summary.
-- **Semantic memory**: Each fact has a decay factor. If a fact isn't accessed for a while, its score drops. When score < threshold, it's removed. This is similar to Ebbinghaus forgetting curve.
-- **Working memory**: Explicitly cleared at the start of a new task. I also use a sliding window: if the context exceeds a token budget (e.g., 4k tokens), I summarize the oldest turns into a brief note.
+That leaves maybe 100k for actual conversation, but if you fill it up, you'll hit performance degradation (lost-in-the-middle) and increased latency. I've found that keeping working memory under 50% of the context window is a good rule of thumb.
 
-## Implementation Tips
-- Use separate collections/tables for each memory type. Don't mix raw logs with distilled facts.
-- For episodic logs, index by user_id and timestamp for fast retrieval.
-- For semantic memory, use a small embedding model (e.g., all-MiniLM-L6-v2) to keep costs low.
-- When summarizing episodes, use a separate LLM call with a structured prompt: "Extract up to 5 key facts from this conversation."
-- Monitor memory usage: log the number of entries, average retrieval time, and hit rate. If hit rate drops, adjust decay or summarization.
+**Implementation**: I use a `MessageBuffer` that trims old messages when the token count exceeds a threshold. But trimming naively loses important context. Instead, I summarize the oldest messages into a running summary (a compressed representation) and keep the last N messages verbatim. This is a classic technique, but the summary must be updated incrementally to avoid re-summarizing the whole history each time.
 
-## Open Questions
-I haven't fully solved **memory consolidation** — how to merge similar facts or detect contradictions. Also, how often should you run forgetting? Real-time or batch? I lean towards batch (e.g., nightly) to avoid overhead.
+## Episodic Memory: The Log
 
-Memory design is still an art. Start simple, measure, and iterate. Your agent will thank you.
+Episodic memory is a structured log of what happened. I store it as JSON records with fields like:
+
+```json
+{
+  "timestamp": "2025-01-15T10:30:00Z",
+  "type": "user_query",
+  "content": "What's the status of the deployment?",
+  "outcome": "success",
+  "metadata": {"session_id": "abc123"}
+}
+```
+
+This log is append-only and cheap to write. It's the raw material for semantic memory. I've learned to log everything: not just user messages, but also tool calls, errors, and intermediate thoughts. You never know what will be useful later.
+
+**Forgetting**: Episodic logs can grow indefinitely. I use a retention policy: keep everything for 30 days, then aggregate older logs into daily summaries. This is a form of forgetting that preserves high-level patterns without storing every detail.
+
+## Semantic Memory: The Distilled Knowledge
+
+Semantic memory is what the agent actually retrieves to inform future decisions. I build it by periodically processing episodic logs and extracting key facts, user preferences, and task outcomes. These are stored as embeddings in a vector database.
+
+**Extraction**: I use an LLM to generate concise statements from episodes. For example, from a conversation about deployment, I might extract:
+
+- "User prefers blue-green deployments over rolling updates."
+- "The staging server is flaky; always check health before deploy."
+
+These statements are then embedded and stored with metadata (timestamp, source episode).
+
+**Retrieval**: At query time, I embed the current conversation and retrieve top-k relevant memories. I use a hybrid approach: keyword search (BM25) + vector search, then rerank with a cross-encoder. This improves precision, especially for domain-specific terms.
+
+**Tradeoff**: Semantic memory is lossy. The extraction process might miss nuances. I mitigate this by keeping the original episode ID in the memory record, so the agent can fall back to the full log if needed.
+
+## Forgetting: The Uncomfortable Necessity
+
+Forgetting isn't just about storage limits; it's about relevance. Old memories can mislead. I've implemented several forgetting mechanisms:
+
+- **Temporal decay**: Memories older than X days get lower retrieval scores.
+- **Importance weighting**: Memories tagged as 'critical' (e.g., security constraints) are never forgotten.
+- **Conflict resolution**: If a new memory contradicts an old one, the old one is deprecated.
+
+I've also experimented with active forgetting: when the agent fails a task, it can explicitly mark related memories as 'unreliable'.
+
+## Evaluation: How Do You Know It Works?
+
+I evaluate memory systems with three metrics:
+
+- **Recall accuracy**: Can the agent retrieve the right memory for a given query? I build a test set of queries and expected memories.
+- **Task performance**: Does the agent complete tasks better with memory than without? I use a set of multi-turn tasks.
+- **Latency overhead**: How much time does memory retrieval add? I aim for <200ms for retrieval and reranking.
+
+One open question: how to measure the quality of memory summarization? I haven't found a good automated metric, so I rely on human evaluation.
+
+## Implementation Notes
+
+- Use a dedicated vector DB (I use Qdrant) and keep the index in memory for speed.
+- For episodic logs, I use a simple append-only file or a time-series DB.
+- The summarization process runs asynchronously to avoid blocking the main loop.
+
+## Conclusion
+
+Designing agent memory is a balancing act between completeness and relevance. Start with a simple log, add semantic extraction when you hit context limits, and implement forgetting to keep the system agile. It's not perfect, but it's a pragmatic approach that works for my surgical agent and RAG systems.
+
+I'm still exploring how to make memory more adaptive—for example, learning what to remember based on task outcomes. If you have ideas, I'd love to hear them.
