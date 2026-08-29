@@ -1,49 +1,57 @@
 ---
 title: "Graph-based retrieval for technical docs: entities, edges, query planning"
-description: "Exploring graph RAG for technical docs: entity extraction, edge building, query planning, and tradeoffs."
-date: 2026-08-09
-tags: ["graph-rag", "retrieval", "knowledge-graph", "query-planning"]
+description: "A practical look at building a knowledge graph for RAG: chunking, entity extraction, edge types, and query planning with tradeoffs."
+date: 2026-08-29
+tags: ["rag", "knowledge-graph", "retrieval", "llm"]
 draft: false
 ---
 
-When I moved from surgical computer vision to building RAG systems for technical documentation, I quickly hit the limits of vanilla vector search. Chunking a 200-page API reference into 512-token pieces and embedding them works for simple Q&A, but fails when a question spans multiple sections: "How does the authentication middleware interact with the rate limiter?" The answer lives in two different chunks, and a dense retriever often returns one and misses the other. That's why I started experimenting with graph-based retrieval.
+Most RAG systems I've seen treat documents as a flat pile of chunks. You embed them, build a vector index, and hope the top-k hits contain the answer. That works fine for FAQ-style queries, but technical documentation is different: it's full of entities (APIs, configs, error codes) and relationships ("depends on", "overrides", "causes"). A flat vector search often misses the connection between two chunks that are semantically distant but structurally linked.
 
-## Why graphs for technical docs?
+I've been experimenting with a hybrid approach: build a lightweight knowledge graph on top of the chunks, then use the graph to guide retrieval. The idea isn't new, but the engineering details matter. Here's what I've learned.
 
-Technical documents are inherently relational. Entities (APIs, modules, configs, protocols) have explicit links: function A calls function B, config X overrides default Y, error code Z is thrown by service W. A knowledge graph captures these relationships explicitly, whereas a vector index captures them only implicitly (and often poorly).
+## Chunking with entity anchors
 
-But building a graph is not free. You need to extract entities and relations from text, which is noisy and expensive. The key is to decide what level of granularity: fine-grained (every function, every parameter) is overkill; coarse-grained (module, service, concept) might miss critical details. I've found a middle ground: extract entities at the level of "concepts" (e.g., authentication, rate limiter, middleware) and relations as "verbs" (e.g., uses, overrides, throws).
+The first step is still chunking, but instead of fixed-size windows, I anchor chunks around entity mentions. I run a lightweight NER model (or even a regex-based extractor for code identifiers) to find entities like function names, class names, error codes, and config keys. Then I split the document so that each chunk contains a coherent set of entities and their surrounding context. This creates chunks that are semantically dense but also graph-friendly: each chunk becomes a node, and entities become properties or separate nodes.
 
-## Entity and edge extraction: practical notes
+For example, in a Kubernetes doc, a chunk might contain the Deployment spec and reference the `replicas` field, the `RollingUpdate` strategy, and the `maxSurge` parameter. These entities can be linked to other chunks that explain them in detail.
 
-I've tried two approaches: LLM-based extraction and rule-based extraction. LLM-based is more flexible but has a failure mode: it hallucinates relations that don't exist. For example, it might infer "rate limiter uses Redis" when the document only mentions Redis in passing. To mitigate, I use a two-pass approach: first, extract candidate triples with a low-temperature LLM; second, validate each triple against the source text using a simple entailment check (another LLM call or a regex-based check for explicit mentions). This cuts false positives significantly.
+## Edge types: more than just "related"
 
-Rule-based extraction works well for structured docs like OpenAPI specs or protobuf definitions, where relations are explicit (e.g., `imports`, `defines`, `implements`). For prose, it's less reliable. I've had success with a hybrid: rules for structured parts, LLM for prose, then merge.
+A naive graph would connect chunks with a generic "related" edge. That's not very useful for query planning. I've found it worth the effort to extract typed edges. Some examples:
+
+- **depends_on**: Chunk A references a component that is defined in Chunk B.
+- **overrides**: Chunk A describes a default value that Chunk B overrides in a specific scenario.
+- **causes**: Chunk A describes an error condition that leads to Chunk B's troubleshooting steps.
+- **part_of**: Chunk A is a subsection of a larger concept in Chunk B.
+
+Extracting these edges automatically is hard. I've used LLMs to classify relationships between entity pairs, but it's expensive and error-prone. A cheaper approach is to use syntactic patterns: "X depends on Y", "X overrides Y", "X causes Y". For code, you can parse import statements, function calls, and config inheritance. It's not perfect, but it gets you a decent graph without breaking the bank.
 
 ## Query planning: from natural language to graph traversal
 
-Once you have a graph, retrieval becomes a planning problem. A naive approach is to embed the query, find the most similar entities, and then do a 1-hop or 2-hop expansion. But that often misses the relational context. Better is to parse the query into a graph pattern. For example, "How does authentication interact with rate limiting?" becomes a pattern: (auth)-[?]->(rate_limiter). Then you can search for paths of length 1-3 between these entities.
+Once you have the graph, the retrieval problem becomes: given a query, which nodes should I retrieve? I use a two-step process:
 
-I've implemented a simple planner that uses an LLM to extract the key entities and the intended relation from the query. It outputs a structured query like `{entities: ["authentication", "rate_limiter"], relation: "interact"}`. Then I translate that into a Cypher query if using Neo4j, or a custom traversal over an in-memory graph. The tradeoff: LLM-based planning adds latency (2-3 seconds per query) and can fail on ambiguous queries. For a fallback, I keep a keyword-based planner that just extracts entities via a small NER model.
+1. **Entity linking**: Extract entities from the query (again using NER or LLM) and map them to graph nodes.
+2. **Graph expansion**: Start from those seed nodes and traverse edges to find neighboring chunks. The traversal can be weighted by edge type and distance.
 
-## Retrieval and reranking: combining graph and vector
+For example, a query like "Why does my Deployment hang when I set maxSurge to 0?" would extract `Deployment`, `maxSurge`, and maybe `hang`. The graph might have a `causes` edge from a chunk about `maxSurge=0` to a troubleshooting chunk. That's exactly what you want.
 
-Pure graph retrieval can miss documents that are relevant but not directly connected. So I combine: first, retrieve candidate chunks via vector similarity; second, expand with graph neighbors of the entities found in those chunks; third, rerank the union using a cross-encoder. This hybrid approach improved my hit rate on a set of 50 technical queries from 60% to 85% (measured by manual relevance judgment). The cost is more retrieval latency: vector search (~50ms) + graph expansion (~200ms) + reranking (~500ms) = ~750ms, which is acceptable for an internal tool.
+But there's a tradeoff: graph traversal can explode. If you traverse too many hops, you retrieve irrelevant chunks. I limit expansion to 2 hops and only follow edges that have a high confidence score (if you have one).
 
-## Evaluation: what to measure
+## Evaluation: it's not just about recall
 
-I don't trust end-to-end answer accuracy alone, because it conflates retrieval with generation. I evaluate retrieval in isolation using a set of queries with known relevant chunks. Metrics: recall@k (does the answer appear in the top k?), and mean reciprocal rank (MRR). For graph-specific evaluation, I check whether the graph traversal finds the correct path. I've built a small eval set of 30 queries that require multi-hop reasoning, and I track how often the planner extracts the right entities and relations.
+I've evaluated this approach on a small set of technical docs (about 500 pages) with 50 queries. I compared three retrieval methods: pure vector, vector + reranker, and graph-guided (vector + graph expansion). The graph-guided approach improved recall@5 by about 15% over vector-only, but the bigger win was in answer quality: the LLM generated fewer hallucinations because it had the right context.
 
-## Failure modes and open questions
-
-Graph retrieval has its own failure modes. One is over-expansion: if you do 2-hop expansion on a densely connected graph, you might retrieve half the corpus. I mitigate with a max node limit and edge weight thresholds. Another is stale graphs: documents change, and the graph becomes outdated. I haven't solved incremental updates yet; I rebuild the graph nightly, which is fine for static docs but not for live wikis.
-
-An open question: how to handle queries that don't map to any entity? For example, "What are the best practices for error handling?" — that's a concept, not an entity. I've found that falling back to pure vector search works, but it's not ideal. I'm experimenting with adding a "topic" node type that clusters related entities, but it's early days.
+However, there's a failure mode: if the entity extraction or edge classification is wrong, the graph can mislead the retrieval. I've seen cases where a spurious `causes` edge pulled in a completely irrelevant chunk. So I always combine graph retrieval with a vector fallback: retrieve top-k from both and merge, then rerank.
 
 ## Implementation details
 
-For the graph store, I've used both Neo4j and an in-memory NetworkX graph. Neo4j is robust but adds infrastructure overhead; for a small corpus (<10k nodes), in-memory is faster and simpler. For entity extraction, I use a fine-tuned BERT-based NER model for technical terms, plus an LLM for relation extraction. The LLM calls are batched to reduce cost.
+I use Neo4j for the graph (it's easy to query with Cypher), but you could use a simpler in-memory graph if your docs are small. For entity extraction, I've tried both spaCy and a fine-tuned BERT; spaCy is fast but misses domain-specific terms. I ended up using a hybrid: spaCy for general entities, plus a regex list for code identifiers.
 
-One concrete tip: when chunking documents for the vector index, I include the entity names as metadata, so I can map chunks to graph nodes. This makes the graph-vector bridge trivial.
+For the LLM call to classify edges, I batch pairs and use a low temperature. It costs about 0.1 cents per pair, which is acceptable for a one-time build.
 
-Graph-based retrieval is not a silver bullet. It adds complexity and maintenance burden. But for technical docs where relationships matter, it's a significant improvement over pure vector search. I'm still exploring how to make the planner more robust and the graph more self-updating. If you've tackled similar problems, I'd love to hear how you handled query planning and graph maintenance.
+## Open questions
+
+I haven't yet figured out how to update the graph incrementally when docs change. Rebuilding the whole graph is expensive. Also, the query planning is still quite naive—I'd like to use a small LLM to generate a Cypher query directly, but I'm worried about reliability. If you've tried that, I'd love to hear.
+
+Graph-based retrieval isn't a silver bullet, but for technical docs with clear entities and relationships, it's a valuable addition to the RAG stack. The key is to keep it simple: start with a few edge types, limit traversal depth, and always have a vector fallback.
