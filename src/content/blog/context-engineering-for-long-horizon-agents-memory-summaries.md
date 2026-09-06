@@ -1,57 +1,103 @@
 ---
 title: "Context Engineering for Long-Horizon Agents: Memory, Summaries, and State Compression"
-description: "Practical techniques for managing context windows in long-running agents: memory types, summarization tradeoffs, and state compression."
-date: 2026-08-16
-tags: ["llm-agents", "context-engineering", "memory", "state-compression"]
+description: "A practical guide to managing context windows in long-running agents, covering memory architectures, summarization strategies, and state compression tradeoffs."
+date: 2026-09-06
+tags: ["agents", "context", "memory", "llm"]
 draft: false
 ---
 
-When I first built a surgical agent (Surg-Agent) that needed to track a multi-step procedure, I hit a wall: the context window. Even with 128k tokens, a long-horizon task—like a 2-hour surgery or a complex data pipeline—quickly fills up. The naive approach of stuffing everything into the prompt leads to two failure modes: (1) the model loses early critical details (the 'lost in the middle' effect), and (2) token costs explode. This post is about engineering the context, not just prompting.
+When I started building Surg-Agent, a RAG-based assistant for surgical workflows, I assumed the hardest part would be making the model understand domain-specific tools. It wasn't. It was keeping the agent coherent over a 30-minute surgery simulation without blowing the context window or losing track of what happened five steps ago.
 
-## The Three-Layer Memory Model
+Long-horizon agents—whether they're controlling a robot, running a multi-step research task, or monitoring a clinical workflow—face a fundamental problem: the context window is finite, but the task history is not. Every token you keep costs you space, and every token you drop costs you memory. This post is about the engineering choices I've made (and some I'm still wrestling with) to manage that tradeoff.
 
-I've found it useful to separate memory into three layers:
+## The Naive Approach: Stuff Everything In
 
-- **Working memory**: the immediate context (last few steps, current state). This is what you put in the prompt directly.
-- **Episodic memory**: a compressed summary of past events, updated incrementally.
-- **Semantic memory**: a knowledge base (e.g., RAG over manuals, past cases) that is retrieved on demand.
+The simplest design is to append every observation and action to a running transcript. This works until it doesn't. With a 128k-token window, you might get through 50-100 steps before hitting the limit. Then you either truncate (losing early context) or fail. I've seen agents that start fine but degrade into repeating the same action because they've forgotten their own earlier steps.
 
-For a long-horizon agent, the key is to decide what goes into working memory and what gets offloaded to summaries or retrieval.
+Truncation is a trap. If you just drop the oldest tokens, you lose the initial goal specification, the constraints, the user's preferences. The agent becomes a goldfish. I've had agents that, after 20 minutes, forgot they were supposed to avoid damaging certain tissue types—because that instruction was in the first 2k tokens.
 
-## Summarization: The Tradeoff
+## Memory Architectures: Not All Tokens Are Equal
 
-Summarization is the most common compression technique, but it's lossy. I've used two approaches:
+The fix is to separate memory into layers, each with different retention policies. I've settled on a three-tier design:
 
-1. **Rolling summary**: after every N steps, ask the LLM to summarize the current summary plus the last N steps. This is simple but suffers from 'summary drift'—errors accumulate, and early details get lost. I've seen agents forget the patient's allergy after 50 steps because the summary didn't propagate it.
+1. **Core context**: The system prompt, goal, and immutable constraints. This stays in every request.
+2. **Working memory**: Recent observations and actions, typically the last 10-20 steps. This is what the model sees as 'current state'.
+3. **Long-term memory**: Summaries and extracted facts from older steps, stored externally and retrieved on demand.
 
-2. **Hierarchical summarization**: keep a tree of summaries—leaf nodes are raw steps, internal nodes are summaries of children. When you need a detail, you can traverse the tree. This is more robust but requires a retrieval step to find the relevant leaf. I haven't fully implemented this yet, but it's promising.
+This is essentially a cache hierarchy for LLMs. The key insight is that you don't need every raw detail in the prompt—you need enough to make the right decision at each step.
 
-**Concrete numbers**: For a 100-step task, a rolling summary with a 500-token budget per summary and 10 steps per update yields about 10 summaries, each 500 tokens = 5k tokens, plus the last 10 raw steps (say 2k tokens) = 7k tokens total. That's far better than 100 steps × 500 tokens = 50k tokens. But you must test what compression ratio preserves accuracy. In my experience, a 10:1 compression is safe, 20:1 starts to lose critical details.
+## Summarization: Lossy Compression with Purpose
 
-## State Compression: Beyond Summaries
+Summarization is the most common compression technique, but it's easy to do badly. A naive approach—'summarize the entire conversation so far'—produces a bland blob that loses critical specifics. I've found it more effective to summarize into structured fields:
 
-Sometimes you don't need a natural-language summary; you need a structured state. For example, in a surgical agent, the state might be: current phase, instruments in hand, patient vitals, and a checklist of completed steps. This can be represented as a JSON object that is updated after each step. The LLM can output a state update, and you overwrite the previous state. This is lossless for the structured parts, but you lose the narrative of how you got there.
+- **Goal state**: What are we trying to achieve? Has it changed?
+- **Progress**: What major milestones have been completed?
+- **Current obstacles**: What's blocking us right now?
+- **Decisions made**: What choices did we make and why?
+- **User preferences**: What did the user correct or emphasize?
 
-**Tradeoff**: structured state is precise but rigid. If the task requires reasoning about past events (e.g., 'why did we choose this incision?'), you need episodic memory. So I combine both: a structured state for the current status, and a rolling summary for the reasoning trail.
+For Surg-Agent, I use a template like:
 
-## Retrieval-Augmented Memory
+```
+Surgical context summary:
+- Current phase: tumor resection
+- Completed: incision, exposure
+- Obstacles: bleeding at site A, low visibility
+- Decisions: switched to bipolar forceps due to smoke
+- Patient constraints: avoid right recurrent laryngeal nerve
+```
 
-Instead of summarizing everything, you can retrieve relevant past steps on demand. This is like RAG but over the agent's own history. I've experimented with embedding each step and storing in a vector DB. When the agent needs to recall something, it queries with the current context. This works well but adds latency (embedding + search). For real-time agents (like surgical), latency is critical—I aim for <200ms total, so retrieval must be fast. I've used lightweight embeddings (e.g., 384-dim) and a simple cosine similarity search; it's acceptable.
+This is far more useful than a paragraph. The model can quickly reconstruct the state without reading 50k tokens of raw logs.
 
-**Failure mode**: retrieval might miss a critical step if the query isn't well-formed. I mitigate by always including the structured state, which acts as a fallback.
+But summarization introduces a failure mode: the summary is only as good as the summarizer. If the summarization prompt is too vague, it might drop a critical detail. I've had summaries that omitted the fact that a tool was malfunctioning, causing the agent to retry it repeatedly. Mitigation: include a 'critical alerts' field that is never summarized away, and always append recent raw events alongside the summary.
 
-## Evaluation: The Hard Part
+## State Compression: Beyond Text
 
-How do you know if your context engineering is working? I use two metrics:
+Sometimes you don't need text at all. If your agent is tracking numeric state (e.g., instrument position, patient vitals), you can store that as structured data and inject it as a compact JSON blob. For example, instead of writing "the trocar is at x=10, y=20, z=30" in natural language, you keep a state dictionary:
 
-- **Task success rate**: does the agent complete the task correctly? This is the ultimate test.
-- **Recall of critical facts**: after the task, I query the agent for specific facts (e.g., 'What was the patient's blood pressure at step 40?') and measure accuracy. This directly tests memory.
+```json
+{"tool": "grasper", "pos": [10, 20, 30], "grip": 0.8}
+```
 
-I've found that a 90% recall of critical facts is necessary for a reliable agent. Below that, the agent makes mistakes that are hard to debug.
+This is both token-efficient and less error-prone. The model can read the JSON at a glance, and you avoid the ambiguity of natural language.
+
+For even longer horizons, consider a vector store of past states. When the agent needs to recall a specific event, you retrieve by similarity. This is what I'm exploring now: instead of a linear summary, keep a vector index of step embeddings, and at each step, retrieve the top-k most relevant past steps to inject into the prompt. This is essentially RAG applied to the agent's own history.
+
+The tradeoff is latency and complexity. Each retrieval adds 10-50ms, and you need to decide what 'relevance' means. I've had mixed results: sometimes the retrieval pulls in a step that's semantically similar but not causally important. A hybrid approach—summary for the big picture, retrieval for specific details—seems more robust.
+
+## Token Budgets: A Practical Heuristic
+
+I've developed a simple budget for a 128k window:
+
+- System prompt + goal: 2k tokens
+- Working memory (last 10 steps): 10k tokens
+- Long-term summary: 5k tokens
+- Retrieved memories: 5k tokens
+- Tool definitions: 10k tokens (if many functions)
+- Scratchpad for reasoning: 10k tokens
+
+That leaves about 86k tokens for the current step's input and output. In practice, I rarely use that much, but it's good headroom. If you find yourself exceeding the budget, it's a sign you're not compressing enough.
+
+## Evaluation: How Do You Know It Works?
+
+I've learned the hard way that you can't just eyeball an agent's behavior. You need a suite of tests that probe memory. I use three types:
+
+1. **Recall tests**: After N steps, ask the agent to state the original goal or a specific constraint. Does it still know?
+2. **Distractor tests**: Insert irrelevant events, then ask the agent to ignore them and continue the main task. Does it get derailed?
+3. **Long-horizon consistency**: Run the same task twice, once with a naive context, once with your memory system. Compare task completion rates and error patterns.
+
+For Surg-Agent, I built a simulated surgical environment where I can inject events (e.g., unexpected bleeding) and check if the agent responds appropriately 50 steps later. This is more reliable than reading logs.
 
 ## Open Questions
 
-- How to automatically decide when to summarize vs. retrieve? I've used heuristics (e.g., if the state is large, summarize), but a learned policy would be better.
-- Can we compress state without losing reasoning ability? I suspect a combination of structured state + a 'reasoning trace' that is selectively summarized works best, but it's an art.
+I'm still wrestling with a few things:
 
-Context engineering is the new prompt engineering. It's not about writing better prompts; it's about designing a memory system that fits the task. Start with a simple rolling summary, measure recall, and iterate. That's what I did, and it transformed my agent from a toy to something that can actually run a full procedure.
+- **When to summarize vs. retrieve?** I have a heuristic (summarize every 20 steps, retrieve on demand), but I don't have a principled answer.
+- **How to handle conflicting memories?** If the summary says X but a retrieved raw step says Y, which wins?
+- **Is there a theoretical limit to how much an agent can remember?** Even with perfect compression, there's a bound on the information you can carry forward. I suspect it's lower than we think.
+
+## Conclusion
+
+Context engineering is the new prompt engineering. For long-horizon agents, it's not about writing the perfect prompt—it's about designing a memory system that decides what to keep, what to compress, and what to retrieve. The tradeoffs are real: summarization loses detail, retrieval adds latency, and both can fail silently. But with a structured approach and rigorous evaluation, you can build agents that remember their goals, learn from their mistakes, and stay coherent over hundreds of steps.
+
+I haven't tried all of this in production yet—some of it is still in the lab. But if you're building a long-horizon agent, I hope these notes save you some of the pain I went through. And if you've solved the conflicting-memory problem, please write a blog post about it.
