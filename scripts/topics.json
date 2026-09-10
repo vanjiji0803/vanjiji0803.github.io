@@ -28,6 +28,7 @@
     "Context engineering for long-horizon agents: memory, summaries, and state compression",
     "Function calling schema design: how bad parameters create brittle agents",
     "Evaluating LLM agents beyond pass/fail: traces, recovery, and tool-use quality",
-    "Planning algorithms for agents: ReAct, plan-and-execute, state machines, and where each breaks"
+    "Planning algorithms for agents: ReAct, plan-and-execute, state machines, and where each breaks",
+    "Hallucination control in production LLM systems: constraints, retrieval, verification, and refusal"
   ]
 }
