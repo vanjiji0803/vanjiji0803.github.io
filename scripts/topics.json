@@ -35,6 +35,7 @@
     "Latency budgets for LLM applications: streaming, caching, batching, and model routing",
     "Prompt templates as software interfaces: versioning, regression tests, and observability",
     "Agent memory design: episodic logs, semantic memory, working memory, and forgetting",
-    "Multi-agent systems: when decomposition helps and when it only adds failure modes"
+    "Multi-agent systems: when decomposition helps and when it only adds failure modes",
+    "From algorithm to product: turning model output into deterministic user-facing behavior"
   ]
 }
