@@ -25,6 +25,7 @@
     "Intent recognition in agent systems: from user utterance to executable task state",
     "Why RAG fails: chunking, retrieval recall, reranking, and answer grounding",
     "Tool calling is not agency: building reliable execution loops for LLM agents",
-    "Context engineering for long-horizon agents: memory, summaries, and state compression"
+    "Context engineering for long-horizon agents: memory, summaries, and state compression",
+    "Function calling schema design: how bad parameters create brittle agents"
   ]
 }
