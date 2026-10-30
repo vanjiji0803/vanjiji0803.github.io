@@ -38,6 +38,7 @@
     "Multi-agent systems: when decomposition helps and when it only adds failure modes",
     "From algorithm to product: turning model output into deterministic user-facing behavior",
     "Search algorithms inside AI systems: beam search, sampling, temperature, and decoding tradeoffs",
-    "Graph-based retrieval for technical documents: entities, edges, and query planning"
+    "Graph-based retrieval for technical documents: entities, edges, and query planning",
+    "LLM evaluation datasets: why small private evals can beat generic public benchmarks"
   ]
 }
