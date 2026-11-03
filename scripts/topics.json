@@ -22,6 +22,7 @@
     "Observability for LLM agents: traces, spans, prompts, tool outputs, and failure taxonomy"
   ],
   "used": [
-    "Intent recognition in agent systems: from user utterance to executable task state"
+    "Intent recognition in agent systems: from user utterance to executable task state",
+    "Why RAG fails: chunking, retrieval recall, reranking, and answer grounding"
   ]
 }
