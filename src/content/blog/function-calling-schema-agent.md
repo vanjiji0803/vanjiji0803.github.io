@@ -1,37 +1,39 @@
 ---
-title: "Function Calling Schema 设计：糟糕的参数如何让 Agent 变得脆弱"
-description: "从参数类型、枚举、嵌套结构到错误处理，拆解 Function Calling Schema 设计中的常见陷阱，以及如何用契约思维让 Agent 更健壮。"
-date: 2026-10-17
-tags: ["function calling", "agent", "schema", "llm"]
+title: "Function calling Schema 设计：坏参数如何让 Agent 变脆"
+description: "从参数粒度、枚举、可空字段到错误语义，拆解 function calling schema 的常见坑，以及它们如何让 Agent 在边界条件下崩掉。"
+date: 2026-11-06
+tags: ["function-calling", "agent", "schema", "llm"]
 draft: false
 ---
 
-最近在重构 Surg-Agent 的工具层，被一个看似简单的参数设计坑了两天。事情是这样的：我们有一个 `query_patient_record` 工具，参数是 `patient_id`（字符串）和 `time_range`（字符串，格式如 "2024-01-01~2024-03-01"）。模型经常把 `time_range` 写成 "last 3 months" 或者 "2024-01-01 to 2024-03-01"，导致后端解析失败。更糟的是，失败后 Agent 会重试，但重试时又生成另一种错误格式，陷入死循环。这让我意识到，Function Calling 的 Schema 不是简单的类型声明，而是模型与系统之间的契约。契约模糊，Agent 必然脆弱。
+做 RAG 或 Agent 时，最容易被低估的工程细节是 function calling 的 schema。模型不是编译器，它靠 token 概率去“猜”参数；schema 里任何一个模糊点，都会在长链路里被放大成重试、幻觉或死循环。下面按我踩过的坑聊几个具体机制。
 
-### 参数类型：别让模型猜
+**参数粒度：别把结构塞进字符串**
 
-第一个坑是类型过于宽松。比如用 `string` 表示日期、数字、布尔值，模型很容易输出 "true" 而不是 `true`，或者 "3" 而不是 `3`。JSON Schema 里 `type: "boolean"` 和 `type: "integer"` 能强制模型生成正确类型，但很多框架的校验层太弱，或者模型本身对类型的遵循度不高。我的经验是：能用基本类型就别用字符串，能用枚举就别用自由文本。
+最常见的坏味道是 `query: string` 里塞 JSON，或者 `filter: string` 让模型自由发挥。模型对自由文本的约束力远低于对 JSON Schema 的约束力。比如检索工具写成 `search(query, filter)`，filter 是 `"price>100 AND category=book"`，模型会编出不存在的字段，解析层再抛异常。改成 `filter: {price_min: number, category: enum}` 后，非法字段在 schema 层就被挡住。代价是工具数量变多、prompt 变长，但换来的是可预测性。我的经验：一个参数如果内部有结构，就展开成 object；如果取值有限，就用 enum。
 
-另一个常见问题是可选参数。如果参数不是必填，模型可能随意省略，也可能塞入无意义的值。比如 `max_results` 可选，模型有时传 `null`，有时传 `0`，有时干脆不传。后端如果没做默认值处理，就会出错。所以要么在 Schema 里明确 `default`，要么在工具实现里做防御。
+**enum 与 oneOf：给模型“选择题”而不是“填空题”**
 
-### 枚举与格式约束：把语义写进 Schema
+`action: string` 是另一个高频坑。模型会输出 `"delete"`、`"remove"`、`"DeleteRecord"` 三种写法。用 `enum: ["create","update","delete"]` 后，解码器在 constrained decoding 下几乎不会越界。但 enum 也有边界：取值超过 20 个时，模型对长列表的召回会下降，且 schema token 成本上升。这时用 `oneOf` 按场景拆分工具，比一个巨型 enum 更稳。
 
-对于有限取值，一定要用 `enum`。比如 `sort_order` 只有 `asc` 和 `desc`，就别用 `string` 让模型自由发挥。枚举不仅能减少错误，还能在模型侧形成更强的约束——很多模型在生成时会参考枚举值。
+**可空与默认值：模型分不清“没给”和“给 null”**
 
-对于有格式要求的字符串，比如日期、时间、ID，可以用 `pattern` 正则。但要注意，正则太复杂模型可能理解不了，反而增加幻觉。一个折中方案是：在参数描述里写清楚格式示例，同时用宽松的正则做兜底。比如 `time_range` 可以要求 `YYYY-MM-DD~YYYY-MM-DD`，正则写成 `^\d{4}-\d{2}-\d{2}~\d{4}-\d{2}-\d{2}$`。如果模型还是写错，那就在工具层做解析容错，比如支持 `to`、`-` 等分隔符，但要在文档里说明。
+`optional` 字段在 JSON Schema 里是“可以不存在”，但很多模型会显式输出 `null`。如果你的后端把 `null` 当值处理，就会覆盖默认值。我现在的做法是：所有可选参数在 description 里写明“省略表示使用默认值，不要传 null”，并在服务端做一次 `null -> 缺失` 的归一化。另一个坑是 `additionalProperties: false`：它能挡住多余字段，但部分模型在 strict 模式下会因此拒绝生成，需要确认所用 API 的支持情况。
 
-### 嵌套对象：深度的代价
+**错误语义：工具返回什么，决定 Agent 会不会自愈**
 
-嵌套对象看起来优雅，但会显著增加模型出错的概率。每多一层嵌套，模型就多一次结构决策。比如 `filters: { age: { min: 18, max: 65 }, gender: "female" }`，模型可能把 `min` 和 `max` 写反，或者把 `gender` 放到外层。我的建议是：能扁平化就扁平化。如果确实需要嵌套，尽量保持两层以内，并在描述里给出完整示例。
+schema 不只约束入参，也约束出参。工具失败时返回 `{"error": "failed"}`，模型只能瞎猜；返回 `{"error_code": "RATE_LIMIT", "retry_after_ms": 2000, "hint": "reduce page_size"}`，模型才有机会调整参数重试。我习惯把错误也定义成 enum，并在 description 里写清“遇到 RATE_LIMIT 应减小 page_size 后重试，最多一次”。这本质上是把重试策略编码进 schema，而不是指望模型自己推理。
 
-### 错误处理：让失败可恢复
+**长链路里的参数漂移**
 
-Schema 设计不只是定义成功路径，还要考虑失败路径。当模型传了错误参数，工具应该返回结构化的错误信息，而不是直接抛异常。比如返回 `{ "error": "invalid_time_range", "message": "time_range must be in format YYYY-MM-DD~YYYY-MM-DD" }`，这样模型有机会根据错误信息修正。但要注意，错误信息不能太冗长，否则会占用上下文。我通常控制在 100 token 以内。
+多步 Agent 里，上一步的输出会作为下一步的输入。如果第一步返回 `id: "123"`（字符串），第二步 schema 要求 `id: integer`，模型可能直接传 `"123"` 导致校验失败，也可能自作主张转成 `123`。两种都不稳定。我的做法是：跨工具传递的 ID 统一用 string，并在 description 里注明“原样传递，不要转换”。这听起来很笨，但比让模型做类型推断可靠得多。
 
-另外，重试策略也很关键。如果同一个工具连续失败两次，就应该停止重试，转而让模型解释或请求用户澄清。否则容易陷入死循环，浪费 token 和时间。
+**评估：用非法参数率而不是准确率**
 
-### 评估与迭代
+评估 function calling 时，除了看“选对工具”的比例，我还会统计两个指标：schema 校验失败率、以及失败后的自愈率（重试一次内成功）。前者高说明 schema 约束不够，后者低说明错误信息不够可操作。构造测试集时，故意给模糊指令（“把那个删了”），看模型是反问、还是猜一个 id 直接调用——后者在删除类工具上是灾难。
 
-Schema 设计好不好，不能靠感觉。我一般会构建一个小的测试集，覆盖常见参数组合和边界情况，然后让模型在离线环境跑一遍，统计参数错误率。对于高频错误，再针对性优化 Schema 或增加示例。这个过程是迭代的，没有一劳永逸的 Schema。
+**还没想清楚的问题**
 
-最后，分享一个我还在探索的问题：如何在 Schema 里表达参数之间的依赖关系？比如 `start_date` 和 `end_date` 必须同时提供，或者 `type` 为 `A` 时 `param_b` 才必填。JSON Schema 的 `dependencies` 和 `oneOf` 可以表达，但模型理解起来有难度。目前我靠工具层校验和错误提示来兜底，效果一般。如果有更好的实践，欢迎交流。
+当工具数量到几十个时，把所有 schema 塞进 context 会挤占预算。我在试“两阶段”：先用一个轻量分类器选工具组，再注入该组的 schema。但这引入了分类错误，且分类器和主模型对工具的理解可能不一致。另一个开放问题是 constrained decoding 对推理型模型的影响——强制 JSON 输出会不会损害思维链质量，我目前只有零散观察，没有系统结论。
+
+一句话总结：schema 是 Agent 和真实世界之间的契约，参数设计得越像“给模型的选择题”，Agent 就越不容易在边界上碎掉。
