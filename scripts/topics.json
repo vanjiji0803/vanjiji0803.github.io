@@ -37,6 +37,7 @@
     "Agent memory design: episodic logs, semantic memory, working memory, and forgetting",
     "Multi-agent systems: when decomposition helps and when it only adds failure modes",
     "From algorithm to product: turning model output into deterministic user-facing behavior",
-    "Search algorithms inside AI systems: beam search, sampling, temperature, and decoding tradeoffs"
+    "Search algorithms inside AI systems: beam search, sampling, temperature, and decoding tradeoffs",
+    "Graph-based retrieval for technical documents: entities, edges, and query planning"
   ]
 }
